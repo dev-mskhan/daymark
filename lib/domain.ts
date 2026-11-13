@@ -1,5 +1,5 @@
 export type ExperienceType = 'iconic' | 'history' | 'local_life' | 'art' | 'nature' | 'food' | 'architecture';
-export interface TripRequest { destination: string; startAt: string; endAt: string; preference: string; mode?: 'fixture' | 'live' }
+export interface TripRequest { destination: string; origin?: string; startAt: string; endAt: string; partySize?: number; preference: string; constraints?: string; mode?: 'fixture' | 'live' }
 export interface Place { id: string; name: string; address: string; latitude: number; longitude: number; types: string[]; rating?: number; source: 'amap' | 'photon' | 'demo'; cityCode?: string; adcode?: string; openingHours?: string; screeningLabel?: string }
 export interface Activity { id: string; placeId: string; durationMinutes: number; reason: string }
 export interface TransportOption { id: string; mode: 'walk' | 'transit'; durationMinutes: number; walkingMinutes: number; transfers: number; distanceMeters: number; fareYuan?: number; lines: string[] }
@@ -29,7 +29,8 @@ export type PlannerAction =
   | { action: 'ask_jev'; query: JevQueryRequest; model?: string };
 export interface Issue { checkId: string; subjectIds: string[]; status: 'flag' | 'unknown'; message: string; condition?: string; evidence?: string[]; repairHint?: string }
 export interface Review { version: number; scope: 'local' | 'global'; status: 'pass' | 'flag' | 'unknown'; issues: Issue[]; latencyMs: number; model: string; answers?: Record<string, { choice: string; confidence: number; probabilities: Record<string, number> }> }
-export interface Snapshot { version: number; activities: Activity[]; routes: (number | null)[]; transportLegs?: TransportLeg[]; issues: Issue[] }
+export interface OriginPoint { latitude: number; longitude: number; formattedAddress: string; }
+export interface Snapshot { version: number; activities: Activity[]; routes: (number | null)[]; transportLegs?: TransportLeg[]; issues: Issue[]; origin?: OriginPoint; firstLeg?: TransportLeg; returnLeg?: TransportLeg; }
 export interface RunEvent { sequence: number; elapsedMs: number; type: string; actor: 'LLM' | 'Jev' | 'Controller'; message: string; version?: number; snapshot?: Snapshot; candidates?: Place[]; review?: Review; decisions?: JevDecision[]; requestScreening?: RequestScreening; transportSelection?: TransportSelection; before?: Activity[]; after?: Activity[]; latencyMs?: number; model?: string; context?: PlanningContext }
 export interface RunResult { status: 'complete' | 'needs_attention'; snapshot: Snapshot; candidates: Place[]; events: RunEvent[] }
 

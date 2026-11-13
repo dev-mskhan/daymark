@@ -6,3 +6,4 @@ coverage
 npm-debug.log*
 *.tsbuildinfo
 artifacts/live*.json
+.shots/

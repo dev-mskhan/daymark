@@ -71,11 +71,11 @@ export class PlannerProvider {
     return { activities, done: next.done || activities.length >= 6, model };
   }
   private async callModel(request: TripRequest, candidates: Place[], current: Activity[], issues: Issue[], signal: AbortSignal, validationFeedback?: string, context?: PlanningContext, queryRound?: { decisions: JevDecision[]; allowJevQuery: boolean }) {
-    if (!process.env.LLM_API_KEY || !process.env.LLM_MODEL) throw new Error('Live 模式需要 LLM_API_KEY 和 LLM_MODEL。');
-    const response = await fetch(`${(process.env.LLM_BASE_URL?.trim() || (process.env.LLM_MODEL?.startsWith('deepseek') ? 'https://api.deepseek.com' : 'https://api.openai.com/v1')).replace(/\/$/, '')}/chat/completions`, {
+    if (!process.env.GROQ_API_KEY || !process.env.GROQ_MODEL) throw new Error('Live mode requires GROQ_API_KEY and GROQ_MODEL.');
+    const response = await fetch(`${(process.env.GROQ_BASE_URL?.trim() || 'https://api.groq.com/openai/v1').replace(/\/$/, '')}/chat/completions`, {
       method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
-      headers: { Authorization: `Bearer ${process.env.LLM_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: process.env.LLM_MODEL, ...(process.env.LLM_MODEL.startsWith('deepseek') ? { thinking: { type: process.env.LLM_THINKING === 'enabled' ? 'enabled' : 'disabled' }, max_tokens: 4000 } : {}), response_format: { type: 'json_object' }, messages: [
+      headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: process.env.GROQ_MODEL, max_tokens: 4000, response_format: { type: 'json_object' }, messages: [
         { role: 'system', content: issues.length ? REPAIR_SYSTEM_PROMPT : NEXT_SYSTEM_PROMPT },
         { role: 'user', content: JSON.stringify({ mode: issues.length ? 'repair' : 'next', request, candidates: issues.length ? candidates : candidates.filter(p => !current.some(a => a.placeId === p.id)), current: current.map((activity, index) => ({ ...activity, index })), currentPlaces: current.map(a => candidates.find(p => p.id === a.placeId)), feedback: issues, previousValidationError: validationFeedback, controllerContext: context, sourceVersion: context?.version, jevDecisions: queryRound?.decisions ?? [], allowJevQuery: queryRound?.allowJevQuery ?? false }) },
       ] }),
@@ -83,7 +83,7 @@ export class PlannerProvider {
     if (!response.ok) throw new Error(`LLM 请求失败 (${response.status})`);
     const payload = await response.json();
     const content = JSON.parse(payload.choices?.[0]?.message?.content ?? '{}');
-    const model = typeof payload.model === 'string' ? payload.model : process.env.LLM_MODEL;
+    const model = typeof payload.model === 'string' ? payload.model : process.env.GROQ_MODEL;
     return { content, model };
   }
 }

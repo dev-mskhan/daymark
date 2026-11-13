@@ -15,7 +15,7 @@ export function validateProposal(proposal: Proposal, current: Activity[], candid
 }
 export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) => void = () => {}, signal = new AbortController().signal): Promise<RunResult> {
   const fixture = request.mode !== 'live';
-  if (!fixture && (!process.env.LLM_API_KEY || !process.env.LLM_MODEL || !process.env.TYPESAFE_API_KEY)) throw new Error('真实模式需要配置 LLM_API_KEY、LLM_MODEL 和 TYPESAFE_API_KEY。');
+  if (!fixture && (!process.env.GROQ_API_KEY || !process.env.GROQ_MODEL || !process.env.TYPESAFE_API_KEY)) throw new Error('Live mode requires GROQ_API_KEY, GROQ_MODEL, and TYPESAFE_API_KEY.');
   const planner = new PlannerProvider(fixture), jev = new JevProvider(fixture);
   const places = new PlacesProvider(fixture, signal);
   const routeCache = new Map<string, TransportOption[]>();
@@ -23,7 +23,22 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
   const events: RunEvent[] = [], started = performance.now();
   let snapshot: Snapshot = { version: 0, activities: [], routes: [], issues: [] };
   const emit = (event: Omit<RunEvent, 'sequence' | 'elapsedMs'>) => { signal.throwIfAborted(); const full = { ...event, sequence: events.length + 1, elapsedMs: Math.round(performance.now() - started) }; events.push(full); onEvent(full); };
-  emit({ type: 'search', actor: 'Controller', message: fixture ? 'Replay demo: scripted places, LLM, and Jev decisions.' : 'Searching Amap for places within the destination city.' });
+  
+  // Geocode origin if provided
+  let originPoint: { latitude: number; longitude: number; formattedAddress: string } | undefined;
+  if (request.origin) {
+    emit({ type: 'geocode_start', actor: 'Controller', message: `Geocoding origin: ${request.origin}` });
+    try {
+      const geocoded = await places.geocode(request.origin);
+      originPoint = { latitude: geocoded.latitude, longitude: geocoded.longitude, formattedAddress: geocoded.formattedAddress };
+      emit({ type: 'geocode_end', actor: 'Controller', message: `Origin located: ${geocoded.formattedAddress} (${geocoded.confidence} confidence)` });
+    } catch (error) {
+      signal.throwIfAborted();
+      emit({ type: 'geocode_error', actor: 'Controller', message: `Could not geocode origin: ${error instanceof Error ? error.message : 'unknown error'}` });
+    }
+  }
+  
+  emit({ type: 'search', actor: 'Controller', message: fixture ? 'Replay demo: scripted places, LLM, and Jev decisions.' : `Searching for places around ${request.destination}, starting from ${request.origin ?? 'the destination center'}.` });
   const candidates = await places.discover(request.destination, EXPERIENCE_TYPES);
   emit({ type: 'candidates', actor: 'Controller', message: `Found ${candidates.length} candidates. Opening hours and experience details remain unverified.`, candidates });
   emit({ type: 'screen_start', actor: 'Jev', message: 'Screening candidates against explicit interests.' });
@@ -101,6 +116,28 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
   const commit = async (proposal: Proposal) => {
     const walking: (number | null)[] = [];
     const transportLegs: TransportLeg[] = [];
+    
+    // Calculate first leg from origin if available
+    let firstLeg: TransportLeg | undefined;
+    if (originPoint && proposal.activities.length > 0) {
+      const firstPlace = candidates.find(p => p.id === proposal.activities[0].placeId)!;
+      const originAsPlace: Place = { id: 'origin', name: originPoint.formattedAddress, address: originPoint.formattedAddress, latitude: originPoint.latitude, longitude: originPoint.longitude, types: [], source: 'demo' };
+      const options = await routeOptions(originAsPlace, firstPlace);
+      let selected: TransportOption | null = null;
+      if (options.length) {
+        const choiceKey = `origin|${firstPlace.id}|${request.preference}`;
+        selected = transportChoiceCache.get(choiceKey) ?? null;
+        if (!selected) {
+          const selectionStarted = performance.now();
+          const selection = await jev.chooseTransport(request, options, snapshot.version, signal);
+          selected = options.find(option => option.id === selection.selectedOptionId) ?? options[0];
+          transportChoiceCache.set(choiceKey, selected);
+          emit({ type: 'transport_selection', actor: 'Jev', version: snapshot.version, message: `Origin → ${firstPlace.name}: selected ${selected.mode === 'walk' ? 'walking' : 'public transit'}, ${selected.durationMinutes} min.`, transportSelection: selection, latencyMs: Math.round(performance.now() - selectionStarted), model: selection.model });
+        }
+      }
+      firstLeg = { fromActivityId: 'origin', toActivityId: proposal.activities[0].id, fromPlaceId: 'origin', toPlaceId: firstPlace.id, selected, options };
+    }
+    
     for (let i = 1; i < proposal.activities.length; i++) {
       const pair = proposal.activities.slice(i - 1, i + 1).map(a => candidates.find(p => p.id === a.placeId)!);
       const options = await routeOptions(pair[0], pair[1]);
@@ -119,6 +156,28 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
       walking.push(selected?.durationMinutes ?? null);
       transportLegs.push({ fromActivityId: proposal.activities[i - 1].id, toActivityId: proposal.activities[i].id, fromPlaceId: pair[0].id, toPlaceId: pair[1].id, selected, options });
     }
+    
+    // Calculate return leg to origin if available
+    let returnLeg: TransportLeg | undefined;
+    if (originPoint && proposal.activities.length > 0) {
+      const lastPlace = candidates.find(p => p.id === proposal.activities.at(-1)!.placeId)!;
+      const originAsPlace: Place = { id: 'origin', name: originPoint.formattedAddress, address: originPoint.formattedAddress, latitude: originPoint.latitude, longitude: originPoint.longitude, types: [], source: 'demo' };
+      const options = await routeOptions(lastPlace, originAsPlace);
+      let selected: TransportOption | null = null;
+      if (options.length) {
+        const choiceKey = `${lastPlace.id}|origin|${request.preference}`;
+        selected = transportChoiceCache.get(choiceKey) ?? null;
+        if (!selected) {
+          const selectionStarted = performance.now();
+          const selection = await jev.chooseTransport(request, options, snapshot.version, signal);
+          selected = options.find(option => option.id === selection.selectedOptionId) ?? options[0];
+          transportChoiceCache.set(choiceKey, selected);
+          emit({ type: 'transport_selection', actor: 'Jev', version: snapshot.version, message: `${lastPlace.name} → Origin: selected ${selected.mode === 'walk' ? 'walking' : 'public transit'}, ${selected.durationMinutes} min.`, transportSelection: selection, latencyMs: Math.round(performance.now() - selectionStarted), model: selection.model });
+        }
+      }
+      returnLeg = { fromActivityId: proposal.activities.at(-1)!.id, toActivityId: 'origin', fromPlaceId: lastPlace.id, toPlaceId: 'origin', selected, options };
+    }
+    
     // Prepare next-node facts before dispatching reviewer and planner together.
     // This keeps route I/O out of the model-overlap interval; no artificial delay.
     if (!fixture && !proposal.done && proposal.activities.length) {
@@ -129,10 +188,12 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
     }
     const issues: Issue[] = [];
     if (walking.includes(null)) issues.push({ checkId: 'route_unknown', status: 'unknown', subjectIds: [], message: '部分交通时间待核实。' });
-    const minutes = proposal.activities.reduce((n, a) => n + a.durationMinutes, 0) + walking.reduce<number>((n, t) => n + (t ?? 0), 0);
+    if (firstLeg && !firstLeg.selected) issues.push({ checkId: 'first_leg_unknown', status: 'unknown', subjectIds: [], message: 'Travel from origin to first stop not verified.' });
+    if (returnLeg && !returnLeg.selected) issues.push({ checkId: 'return_leg_unknown', status: 'unknown', subjectIds: [], message: 'Return travel from last stop to origin not verified.' });
+    const fullJourneyMinutes = (firstLeg?.selected?.durationMinutes ?? 0) + proposal.activities.reduce((n, a) => n + a.durationMinutes, 0) + walking.reduce<number>((n, t) => n + (t ?? 0), 0) + (returnLeg?.selected?.durationMinutes ?? 0);
     const available = (Date.parse(request.endAt + 'Z') - Date.parse(request.startAt + 'Z')) / 60000;
-    if (minutes > available) issues.push({ checkId: 'time_window', status: 'flag', subjectIds: proposal.activities.map(a => a.id), message: `活动与已知交通共 ${minutes} 分钟，超过 ${available} 分钟的时间窗。请缩短或减少活动。`, condition: '活动时长与真实交通时间之和不得超过用户时间窗。', evidence: [JSON.stringify(summarizeTiming(request, proposal.activities, walking))], repairHint: '优先删除或替换造成最长交通的活动；保留明确必去要求，必要时减少活动数。'  });
-    snapshot = { version: snapshot.version + 1, activities: proposal.activities, routes: walking, transportLegs, issues };
+    if (fullJourneyMinutes > available) issues.push({ checkId: 'time_window', status: 'flag', subjectIds: proposal.activities.map(a => a.id), message: `Full journey ${fullJourneyMinutes} min exceeds ${available} min window. Shorten or reduce activities.`, condition: 'Full journey including origin and return travel must fit the time window.', evidence: [JSON.stringify(summarizeTiming(request, proposal.activities, walking, firstLeg?.selected?.durationMinutes ?? null, returnLeg?.selected?.durationMinutes ?? null))], repairHint: 'Remove or shorten activities causing longest routes; keep must-visit requirements, reduce count if needed.'  });
+    snapshot = { version: snapshot.version + 1, activities: proposal.activities, routes: walking, transportLegs, issues, origin: originPoint, firstLeg, returnLeg };
     emit({ type: 'snapshot', actor: 'Controller', version: snapshot.version, message: 'Draft committed. Starting node review.', snapshot });
   };
   let proposal = await propose(), repairs = 0, repaired = false, segmentRepairs = 0;
@@ -179,7 +240,11 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
   }
   if (!proposal.done) snapshot = { ...snapshot, issues: [...snapshot.issues, { checkId: 'incomplete', status: 'unknown', subjectIds: [], message: '规划提前停止，当前行程尚未完成。' }] };
   const result: RunResult = { status: 'needs_attention', snapshot, candidates, events };
-  emit({ type: 'complete', actor: 'Controller', version: snapshot.version, message: 'Planning complete. Opening hours, origin/destination travel, and timezone remain unverified; this is still a draft.', snapshot });
+  const hasOriginVerified = originPoint && snapshot.firstLeg?.selected && snapshot.returnLeg?.selected;
+  const caveatParts: string[] = ['Opening hours'];
+  if (!hasOriginVerified) caveatParts.push('origin/destination travel');
+  caveatParts.push('timezone');
+  emit({ type: 'complete', actor: 'Controller', version: snapshot.version, message: `Planning complete. ${caveatParts.join(', ')} remain unverified; this is still a draft.`, snapshot });
   return result;
 }
 

@@ -1,12 +1,12 @@
 import type { Activity, Place, TimingContext, TripRequest } from './domain';
 
-export function summarizeTiming(request: TripRequest, activities: Activity[], routes: (number | null)[]): TimingContext {
+export function summarizeTiming(request: TripRequest, activities: Activity[], routes: (number | null)[], firstLegMinutes: number | null = null, returnLegMinutes: number | null = null): TimingContext {
   const availableMinutes = (Date.parse(request.endAt + 'Z') - Date.parse(request.startAt + 'Z')) / 60000;
   const activityMinutes = activities.reduce((sum, a) => sum + a.durationMinutes, 0);
   const legs = activities.slice(1).map((a, i) => ({ fromActivityId: activities[i].id, toActivityId: a.id, fromPlaceId: activities[i].placeId, toPlaceId: a.placeId, durationMinutes: routes[i] ?? null }));
-  const knownTravelMinutes = legs.reduce((sum, leg) => sum + (leg.durationMinutes ?? 0), 0);
+  const knownTravelMinutes = legs.reduce((sum, leg) => sum + (leg.durationMinutes ?? 0), 0) + (firstLegMinutes ?? 0) + (returnLegMinutes ?? 0);
   const minimumUsedMinutes = activityMinutes + knownTravelMinutes;
-  const complete = legs.every(leg => leg.durationMinutes !== null);
+  const complete = legs.every(leg => leg.durationMinutes !== null) && (firstLegMinutes !== null || !request.origin) && (returnLegMinutes !== null || !request.origin);
   return { availableMinutes, activityMinutes, knownTravelMinutes, minimumUsedMinutes, remainingUpperBoundMinutes: availableMinutes - minimumUsedMinutes, usedMinutes: complete ? minimumUsedMinutes : null, remainingMinutes: complete ? availableMinutes - minimumUsedMinutes : null, legs };
 }
 

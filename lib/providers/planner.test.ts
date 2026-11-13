@@ -27,7 +27,7 @@ describe('repair patches', () => {
     expect(current.map(a=>a.placeId)).toEqual(['today-art','library']);
   });
   it('converts a real-interface repair response to a stable-ID proposal', async () => {
-    vi.stubEnv('LLM_API_KEY','test'); vi.stubEnv('LLM_MODEL','test');
+    vi.stubEnv('GROQ_API_KEY','test'); vi.stubEnv('GROQ_MODEL','test');
     vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({model:'test',choices:[{message:{content:JSON.stringify({updates:[replacement],removeIndices:[],done:false})}}]}));
     const result = await new PlannerProvider(false).propose({destination:'Beijing',startAt:'2026-10-12T09:00:00',endAt:'2026-10-12T19:00:00',preference:'Art and variety'}, [], current, [{checkId:'repetition',subjectIds:['activity-3'],status:'flag',message:'replace duplicate museum'}],new AbortController().signal);
     expect(result.activities[1].id).toBe('activity-3');
@@ -40,7 +40,7 @@ it('treats missing repair completion flag as unfinished rather than losing the d
   expect(result.activities[1].id).toBe('activity-3');
 });
 it('rejects a second Jev query after the controller supplies decisions', async () => {
-  vi.stubEnv('LLM_API_KEY','test'); vi.stubEnv('LLM_MODEL','test');
+  vi.stubEnv('GROQ_API_KEY','test'); vi.stubEnv('GROQ_MODEL','test');
   vi.spyOn(globalThis,'fetch').mockResolvedValue(Response.json({model:'test',choices:[{message:{content:JSON.stringify({action:'ask_jev',query:{dimension:'preference_fit',subjectIds:['a','b'],scope:'candidate'}})}}]}));
   await expect(new PlannerProvider(false).nextAction({destination:'Beijing',startAt:'2026-10-12T09:00:00',endAt:'2026-10-12T19:00:00',preference:'Art and variety'}, [], current, new AbortController().signal, undefined, undefined, [{queryId:'q',version:1,dimension:'preference_fit',subjectId:'a',choice:'pass',confidence:.9,probabilities:{pass:.9,flag:.1,unknown:0},model:'test'}], false)).rejects.toThrow('必须提交');
 });

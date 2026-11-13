@@ -1,13 +1,10 @@
-# Jev Trip
+# Daymark
 
 **Two Minds, One Trip.**
 
-🌐 **[Try the Live Demo](https://jev-trip.vercel.app/)**
+Daymark is an explainable day-trip planner. The LLM plans ahead; Jev chooses and checks. Deterministic code handles route facts, time calculations, validation, and versioning.
 
-Jev Trip is an explainable day-trip planner. The LLM plans ahead; Jev chooses and checks. Deterministic code handles route facts, time calculations, validation, and versioning.
-
-![Jev Trip product overview](docs/jev-trip-overview.png)
-
+![Daymark product overview](docs/jev-trip-overview.png)
 
 ## How it works
 
@@ -36,15 +33,15 @@ npm run dev -- --hostname 127.0.0.1 --port 3100
 Open [http://127.0.0.1:3100](http://127.0.0.1:3100).
 
 - **Replay demo** is a local scripted run with no credentials or network calls. Start it, then replay or scrub through every planning and repair event.
-- **Live models + maps** uses Amap places and walking/public-transit routes, the configured LLM, and Jev.
+- **Live models + maps** uses Geoapify places/routes, Groq, and Jev.
 
 Live mode requires:
 
 ```env
-AMAP_KEY=
+GEOAPIFY_API_KEY=
 TYPESAFE_API_KEY=
-LLM_API_KEY=
-LLM_MODEL=
+GROQ_API_KEY=
+GROQ_MODEL=
 ```
 
 Optional configuration is documented in [.env.example](.env.example).
@@ -59,7 +56,7 @@ npm run build
 
 ## Current scope
 
-This product plans a single day in mainland Chinese cities using Amap. It supports real POIs, walking and public-transit options, typed Jev decisions, streamed planning events, bounded repair, and replay/export of a run.
+This product plans a single day in USA cities using Geoapify. It supports real POIs and route options, typed Jev decisions, streamed planning events, bounded repair, and replay/export of a run. Supabase Auth and Supabase Postgres are planned for optional saved trips.
 
 It does not yet support multi-day trips, bookings, accounts, persistent history, or verified opening hours. Visit durations are estimates, and every result should be treated as a draft rather than a guaranteed executable itinerary.
 
