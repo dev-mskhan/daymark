@@ -20,9 +20,16 @@ import {
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
-import type { Activity, Place, RunEvent, Snapshot } from "@/lib/domain";
+import type {
+  Activity,
+  DaySegment,
+  Place,
+  RunEvent,
+  Snapshot,
+} from "@/lib/domain";
 import { AmapMap } from "@/app/components/AmapMap";
 import { DayDial, type DialStop } from "@/app/components/DayDial";
+import { DayAccordion } from "@/app/components/DayAccordion";
 
 const defaults = {
   origin: "Penn Station, New York City",
@@ -53,6 +60,9 @@ export default function Home() {
   const [accepted, setAccepted] = useState<Snapshot | null>(null);
   const [showCoverage, setShowCoverage] = useState(false);
   const [coverageDismissed, setCoverageDismissed] = useState(false);
+  // Multi-day state (Task 4.27-4.28)
+  const [multiDaySegments, setMultiDaySegments] = useState<DaySegment[]>([]);
+  const [activeDay, setActiveDay] = useState(1);
   const abort = useRef<AbortController | null>(null);
   const run = useRef(0);
   const shown = cursor === null ? events : events.slice(0, cursor + 1);
@@ -643,13 +653,23 @@ export default function Home() {
                 />
               </div>
               <p className="notice">
-                Draft. Visit durations are estimates. Opening hours
-                {displayed?.origin &&
-                displayed?.firstLeg?.selected &&
-                displayed?.returnLeg?.selected
-                  ? ""
-                  : ", travel to the first stop and from the last stop,"}{" "}
-                and time zones are not verified.
+                {(() => {
+                  const completeEvent = shown.find(
+                    (e) => e.type === "complete",
+                  );
+                  if (completeEvent)
+                    return completeEvent.message.replace(
+                      "Planning complete. ",
+                      "",
+                    );
+                  return `Draft. Visit durations are estimates. Opening hours${
+                    displayed?.origin &&
+                    displayed?.firstLeg?.selected &&
+                    displayed?.returnLeg?.selected
+                      ? ""
+                      : ", travel to the first stop and from the last stop,"
+                  } and time zones are not verified.`;
+                })()}
               </p>
               {displayed?.issues
                 .filter((issue) => !issue.subjectIds.length)
@@ -737,6 +757,64 @@ export default function Home() {
                           Stay about {a.durationMinutes} min
                         </p>
                         <p className="reason">{a.reason}</p>
+                        {place && (
+                          <div className="verification-badges">
+                            {place.formattedOpeningHours && (
+                              <span
+                                className="badge badge-verified"
+                                title={`Opening hours verified${place.lastVerified ? ` as of ${new Date(place.lastVerified).toLocaleDateString()}` : ""}`}
+                              >
+                                ✓ Hours verified
+                              </span>
+                            )}
+                            {place.operationalStatus === "operational" && (
+                              <span
+                                className="badge badge-verified"
+                                title="Place is confirmed operational"
+                              >
+                                ✓ Open
+                              </span>
+                            )}
+                            {place.operationalStatus ===
+                              "temporarily_closed" && (
+                              <span
+                                className="badge badge-warning"
+                                title="Place is temporarily closed"
+                              >
+                                ⚠ Temp. closed
+                              </span>
+                            )}
+                            {place.operationalStatus ===
+                              "permanently_closed" && (
+                              <span
+                                className="badge badge-warning"
+                                title="Place is permanently closed"
+                              >
+                                ✗ Closed permanently
+                              </span>
+                            )}
+                            {place.accessibilityInfo?.wheelchairAccessible && (
+                              <span
+                                className="badge badge-info"
+                                title="Wheelchair accessible"
+                              >
+                                ♿ Accessible
+                              </span>
+                            )}
+                            {place.timezone && (
+                              <span
+                                className="badge badge-info"
+                                title={`Timezone: ${place.timezone}`}
+                              >
+                                🕐{" "}
+                                {place.timezone
+                                  .split("/")
+                                  .pop()
+                                  ?.replace("_", " ")}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {place && place.source !== "demo" && (
                           <a
                             className="source-link"
@@ -828,6 +906,26 @@ export default function Home() {
                 )}
               </div>
             </section>
+
+            {/* Task 4.23-4.28: Multi-day accordion — shown when multiple day segments exist */}
+            {multiDaySegments.length > 1 && (
+              <section className="panel">
+                <div className="panel-heading">
+                  <h2>Multi-day itinerary</h2>
+                  <span className="chip">{multiDaySegments.length} days</span>
+                </div>
+                <DayAccordion
+                  segments={multiDaySegments}
+                  startTimes={multiDaySegments.map(() => form.startTime)}
+                  endTimes={multiDaySegments.map(() => form.endTime)}
+                  activeDay={activeDay}
+                  onDayChange={setActiveDay}
+                  candidateName={(placeId) =>
+                    candidates.find((p) => p.id === placeId)?.name ?? placeId
+                  }
+                />
+              </section>
+            )}
 
             <section className="panel">
               <div className="panel-heading">

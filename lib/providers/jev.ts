@@ -1,15 +1,59 @@
 import { z } from 'zod';
-import type { Activity, Issue, JevDecision, JevQueryRequest, Place, RequestCheckId, RequestScreening, Review, TransportOption, TransportSelection, TripRequest, TimingContext } from '../domain';
-const answerSchema = z.object({ choice: z.enum(['pass', 'flag', 'unknown']), probabilities: z.record(z.string(), z.number()), confidence: z.number() });
+import type { Activity, ActivitySchedule, Issue, JevDecision, JevQueryRequest, Place, PlaceValidationContext, RequestCheckId, RequestScreening, Review, TransportOption, TransportSelection, TripRequest, TimingContext } from '../domain';
+import { buildDetailedSchedule, detectAccessibilityConstraints } from '../planning-context';
+
+// ─── Response schema ──────────────────────────────────────────────────────────
+// The real Jev API returns answers shaped like:
+//   { type: "choice", choice: "technical", probabilities: {...}, confidence: 0.82 }
+// We use .passthrough() so the `type` discriminator doesn't break validation.
+const answerSchema = z.object({
+  choice: z.enum(['pass', 'flag', 'unknown']).optional(),
+  probabilities: z.record(z.string(), z.number()).optional(),
+  confidence: z.number().optional(),
+  noul: z.number().optional(),
+  score: z.number().optional(),
+}).passthrough().transform(raw => {
+  // Normalise: confidence defaults to 0 when absent (noul answers have no confidence)
+  const confidence = typeof raw.confidence === 'number' ? raw.confidence : typeof raw.noul === 'number' ? raw.noul : 0;
+  const choice = raw.choice ?? 'unknown';
+  const probabilities = raw.probabilities ?? {};
+  return { choice, probabilities, confidence };
+});
 const ACTIONABLE_CONFIDENCE = 0.5;
 export class JevProvider {
   constructor(private fixture: boolean) {}
   private async evaluate(state: unknown, questions: Record<string, unknown>, signal: AbortSignal) {
-    if (!process.env.TYPESAFE_API_KEY) throw new Error('Live 模式需要 TYPESAFE_API_KEY。');
-    const response = await fetch('https://api.typesafe.ai/v1/systemone', { method: 'POST', headers: { Authorization: `Bearer ${process.env.TYPESAFE_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: process.env.JEV_MODEL ?? 'jev-1.13.0', state, questions }), signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) });
-    if (!response.ok) throw new Error(`Jev 请求失败 (${response.status})`);
+    // Reads JEV_API_KEY (set by user) or falls back to TYPESAFE_API_KEY for compatibility
+    const apiKey = process.env.JEV_API_KEY ?? process.env.TYPESAFE_API_KEY;
+    if (!apiKey) throw new Error('Live mode requires JEV_API_KEY.');
+
+    // JEV_BASE_URL lets you swap providers without code changes:
+    //   TypeSafe directly (paid):  https://api.typesafe.ai  → endpoint: /v1/systemone
+    //   Hack Club (free, testing): https://ai.hackclub.com/proxy/v1/jev  → endpoint: /systemone
+    //   Default: TypeSafe directly
+    const rawBase = (process.env.JEV_BASE_URL ?? 'https://api.typesafe.ai').replace(/\/$/, '');
+    // If the base already ends with /systemone, use it as-is; otherwise append the path
+    const endpoint = rawBase.endsWith('/systemone')
+      ? rawBase
+      : rawBase.endsWith('/v1')
+        ? `${rawBase}/systemone`
+        : `${rawBase}/v1/systemone`;
+
+    // Model: prefer JEV_MODEL env override; default to jev-latest (TypeSafe alias)
+    const model = process.env.JEV_MODEL ?? 'jev-latest';
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, state, questions }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Jev request failed (${response.status})${body ? ': ' + body.slice(0, 200) : ''}`);
+    }
     const payload = z.object({ model: z.string(), answers: z.record(z.string(), answerSchema) }).parse(await response.json());
-    if (Object.keys(questions).some(id => !payload.answers[id])) throw new Error('Jev 返回不完整。');
+    if (Object.keys(questions).some(id => !payload.answers[id])) throw new Error('Jev returned incomplete answers.');
     return payload;
   }
   async screenRequest(request: TripRequest, signal: AbortSignal): Promise<RequestScreening> {
@@ -17,8 +61,7 @@ export class JevProvider {
     if (this.fixture) {
       const pass = { choice: 'pass' as const, confidence: .99, probabilities: { pass: .99, flag: .005, unknown: .005 } };
       return { model: 'fixture-script', answers: { multi_day: pass, multi_city: pass, booking_or_transaction: pass } };
-    }
-    const questions = {
+    }    const questions = {
       multi_day: { type: 'choice', instructions: 'Does the user explicitly request an itinerary spanning more than one calendar day? Judge the meaning of the complete preference, not isolated numbers or words.', criteria: { pass: 'The request fits within one calendar day. Counts of places, hours, meals, or activities are not multi-day.', flag: 'The user explicitly asks for two or more days, dates, or day-by-day itinerary segments.', unknown: 'The requested time span is genuinely ambiguous.' } },
       multi_city: { type: 'choice', instructions: 'Does the user explicitly ask this single itinerary to cover multiple destination cities? Do not treat neighborhoods, districts, or multiple places within one city as multiple cities.', criteria: { pass: 'The request concerns one destination city or places within it.', flag: 'The user explicitly asks one itinerary to cover two or more cities.', unknown: 'The supplied place names are insufficient to determine whether multiple cities are requested.' } },
       booking_or_transaction: { type: 'choice', instructions: 'Does the user ask the product to execute a booking, reservation, ticket purchase, payment, cancellation, or order? Distinguish execution from recommendations.', criteria: { pass: 'The user asks only for planning, recommendations, or places where reservations may be needed.', flag: 'The user asks the product to perform or modify a transaction, booking, reservation, purchase, cancellation, or order.', unknown: 'It is unclear whether the user wants advice or execution.' } },
@@ -56,6 +99,8 @@ export class JevProvider {
     if (query.scope === 'candidate' && subjects.some(subject => 'activity' in subject)) throw new Error('候选查询不能引用活动 ID。');
     if (query.scope === 'segment' && subjects.some(subject => !('activity' in subject))) throw new Error('行程段查询只能引用活动 ID。');
     if (query.dimension === 'experience_similarity' && query.scope !== 'segment') throw new Error('体验重复查询仅适用于已安排的行程段。');
+    // New dimensions (3.1) are handled by their own methods and should not reach query()
+    if (!['preference_fit', 'experience_similarity', 'evidence_sufficiency'].includes(query.dimension)) throw new Error(`Dimension ${query.dimension} must be evaluated via its dedicated validation method.`);
 
     const templates = {
       preference_fit: {
@@ -71,7 +116,8 @@ export class JevProvider {
         criteria: { pass: 'The supplied name and types are sufficient for the explicit preference being evaluated.', flag: 'The supplied facts contradict the relevant claim.', unknown: 'More evidence is needed; absence of evidence is not a contradiction.' },
       },
     } as const;
-    const template = templates[query.dimension];
+    type CoreDimension = keyof typeof templates;
+    const template = templates[query.dimension as CoreDimension];
     if (this.fixture) return subjects.map(subject => ({ queryId: `${version}:${query.dimension}`, version, dimension: query.dimension, subjectId: subject.id, choice: subject.id.endsWith('4') ? 'unknown' : 'pass', confidence: subject.id.endsWith('4') ? .35 : .9, probabilities: subject.id.endsWith('4') ? { pass: .3, flag: .2, unknown: .5 } : { pass: .9, flag: .05, unknown: .05 }, model: 'fixture-script' }));
     const questions = Object.fromEntries(subjects.map(subject => [subject.id, { type: 'choice', instructions: template.instruction(subject.id), criteria: template.criteria }]));
     const result = await this.evaluate({ userPreference: request.preference, scope: query.scope, subjects }, questions, signal);
@@ -118,6 +164,266 @@ export class JevProvider {
       if (signal.aborted) throw error;
       return { version, scope, status: 'unknown', issues: [{ checkId: 'review_unavailable', status: 'unknown', subjectIds: activities.map(a => a.id), message: 'Jev 审查失败或超时，未完成检查。' }], model: 'unavailable', latencyMs: Math.round(performance.now() - started) };
     }
+  }
+
+  /**
+   * Task 3.2 & 3.6: Validate that scheduled activities fit their place's opening hours.
+   * Returns issues for activities that are outside opening hours or at unknown-hours places.
+   */
+  async validateOpeningHours(
+    request: TripRequest,
+    candidates: Place[],
+    activities: Activity[],
+    routes: (number | null)[],
+    version: number,
+    signal: AbortSignal,
+    firstLegMinutes: number | null = null,
+  ): Promise<Issue[]> {
+    const schedule = buildDetailedSchedule(request, activities, routes, firstLegMinutes);
+    if (!schedule.length) return [];
+
+    // Task 3.9: Deterministic operational status check — no Jev needed
+    const operationalIssues: Issue[] = [];
+    for (const entry of schedule) {
+      const place = candidates.find(p => p.id === entry.placeId);
+      if (!place) continue;
+      if (place.operationalStatus === 'temporarily_closed') {
+        operationalIssues.push({
+          checkId: 'operational_status',
+          status: 'flag',
+          subjectIds: [entry.activityId],
+          message: `${place.name} is temporarily closed. Consider replacing this stop.`,
+          condition: 'Place must be operational at the time of the visit.',
+          evidence: [`operationalStatus: temporarily_closed`, `place: ${place.name}`],
+          repairHint: 'Replace this activity with an open alternative from the candidate pool.',
+        });
+      } else if (place.operationalStatus === 'permanently_closed') {
+        operationalIssues.push({
+          checkId: 'operational_status',
+          status: 'flag',
+          subjectIds: [entry.activityId],
+          message: `${place.name} is permanently closed and must be removed.`,
+          condition: 'Place must be operational at the time of the visit.',
+          evidence: [`operationalStatus: permanently_closed`, `place: ${place.name}`],
+          repairHint: 'Remove this activity and replace with an open alternative.',
+        });
+      }
+    }
+
+    // Task 3.2: Opening hours fit — build Jev questions for activities with hours data
+    const activitiesWithHours = schedule.filter(entry => {
+      const place = candidates.find(p => p.id === entry.placeId);
+      return place?.formattedOpeningHours;
+    });
+
+    if (!activitiesWithHours.length) {
+      // No hours data available — flag as unknown for activities without hours
+      const noHoursIssues: Issue[] = schedule
+        .filter(entry => {
+          const place = candidates.find(p => p.id === entry.placeId);
+          return place && !place.formattedOpeningHours && place.operationalStatus !== 'temporarily_closed' && place.operationalStatus !== 'permanently_closed';
+        })
+        .map(entry => ({
+          checkId: 'opening_hours_fit',
+          status: 'unknown' as const,
+          subjectIds: [entry.activityId],
+          message: `Opening hours for ${candidates.find(p => p.id === entry.placeId)?.name ?? entry.placeId} are not verified.`,
+          condition: 'Visit must fall within confirmed opening hours.',
+          repairHint: 'Verify opening hours before confirming this stop.',
+        }));
+      return [...operationalIssues, ...noHoursIssues];
+    }
+
+    if (this.fixture) {
+      // Fixture: deterministic check against structured hours
+      const hoursIssues = this.checkHoursDeterministic(activitiesWithHours, candidates);
+      return [...operationalIssues, ...hoursIssues];
+    }
+
+    // Live: ask Jev for semantic opening hours fit
+    const subjects = activitiesWithHours.map(entry => {
+      const place = candidates.find(p => p.id === entry.placeId)!;
+      return {
+        activityId: entry.activityId,
+        placeName: place.name,
+        dayOfWeek: entry.dayOfWeek,
+        scheduledStart: entry.scheduledStart.slice(11, 16), // HH:MM
+        scheduledEnd: entry.scheduledEnd.slice(11, 16),
+        openingHours: place.formattedOpeningHours,
+      };
+    });
+
+    try {
+      const questions = Object.fromEntries(subjects.map(s => [
+        s.activityId,
+        {
+          type: 'choice',
+          instructions: `Does the scheduled visit to ${s.placeName} on ${s.dayOfWeek} from ${s.scheduledStart} to ${s.scheduledEnd} fall within the place's opening hours? Use only the supplied opening hours data.`,
+          criteria: {
+            pass: 'The entire scheduled visit falls within confirmed opening hours for that day.',
+            flag: 'The scheduled visit starts or ends outside confirmed opening hours, or the place is closed on that day.',
+            unknown: 'Opening hours data is absent, incomplete, or ambiguous for the scheduled time.',
+          },
+        },
+      ]));
+      const result = await this.evaluate({ activities: subjects }, questions, signal);
+      const jevIssues: Issue[] = subjects
+        .filter(s => result.answers[s.activityId]?.choice !== 'pass')
+        .map(s => {
+          const ans = result.answers[s.activityId];
+          return {
+            checkId: 'opening_hours_fit',
+            status: (ans?.confidence ?? 0) >= 0.5 ? ans?.choice as 'flag' | 'unknown' : 'unknown',
+            subjectIds: [s.activityId],
+            message: ans?.choice === 'flag'
+              ? `${s.placeName} may be closed during the scheduled visit (${s.dayOfWeek} ${s.scheduledStart}–${s.scheduledEnd}).`
+              : `Opening hours fit for ${s.placeName} could not be confirmed.`,
+            condition: 'Visit must fall within confirmed opening hours.',
+            evidence: [`day: ${s.dayOfWeek}`, `scheduled: ${s.scheduledStart}–${s.scheduledEnd}`, `hours: ${JSON.stringify(s.openingHours)}`],
+            repairHint: ans?.choice === 'flag'
+              ? 'Adjust visit time or replace with an open alternative.'
+              : 'Verify opening hours before confirming this stop.',
+          };
+        });
+      return [...operationalIssues, ...jevIssues];
+    } catch {
+      signal.throwIfAborted();
+      return operationalIssues;
+    }
+  }
+
+  /** Task 3.8: Validate accessibility constraints via Jev. Only called when user specified constraints. */
+  async validateAccessibility(
+    request: TripRequest,
+    candidates: Place[],
+    activities: Activity[],
+    version: number,
+    signal: AbortSignal,
+  ): Promise<Issue[]> {
+    if (!detectAccessibilityConstraints(request.constraints)) return [];
+
+    const activitiesWithInfo = activities.filter(a => {
+      const place = candidates.find(p => p.id === a.placeId);
+      return place?.accessibilityInfo !== undefined;
+    });
+
+    if (this.fixture) {
+      // Fixture: pass all if wheelchair accessible, unknown otherwise
+      return activities.flatMap((a): Issue[] => {
+        const place = candidates.find(p => p.id === a.placeId);
+        if (!place) return [];
+        if (place.accessibilityInfo?.wheelchairAccessible === false) {
+          return [{
+            checkId: 'accessibility_fit',
+            status: 'flag',
+            subjectIds: [a.id],
+            message: `${place.name} may not be wheelchair accessible.`,
+            condition: 'Place must meet the user\'s accessibility requirements.',
+            evidence: ['wheelchairAccessible: false'],
+            repairHint: 'Replace with a confirmed accessible alternative.',
+          }];
+        }
+        if (!place.accessibilityInfo) {
+          return [{
+            checkId: 'accessibility_fit',
+            status: 'unknown',
+            subjectIds: [a.id],
+            message: `Accessibility information for ${place.name} is not available.`,
+            condition: 'Place must meet the user\'s accessibility requirements.',
+            repairHint: 'Verify accessibility before confirming this stop.',
+          }];
+        }
+        return [];
+      });
+    }
+
+    if (!activitiesWithInfo.length) {
+      return activities.map(a => ({
+        checkId: 'accessibility_fit',
+        status: 'unknown' as const,
+        subjectIds: [a.id],
+        message: `Accessibility information unavailable for ${candidates.find(p => p.id === a.placeId)?.name ?? a.placeId}.`,
+        condition: 'Place must meet the user\'s accessibility requirements.',
+        repairHint: 'Verify accessibility before confirming this stop.',
+      }));
+    }
+
+    try {
+      const subjects = activitiesWithInfo.map(a => {
+        const place = candidates.find(p => p.id === a.placeId)!;
+        return { activityId: a.id, placeName: place.name, accessibilityInfo: place.accessibilityInfo };
+      });
+      const questions = Object.fromEntries(subjects.map(s => [
+        s.activityId,
+        {
+          type: 'choice',
+          instructions: `Given the user's accessibility constraints, does ${s.placeName} meet those requirements? Use only the supplied accessibilityInfo data.`,
+          criteria: {
+            pass: 'The supplied accessibility facts satisfy the user\'s stated constraints.',
+            flag: 'The supplied accessibility facts directly conflict with the user\'s stated constraints.',
+            unknown: 'Accessibility data is absent or insufficient to decide.',
+          },
+        },
+      ]));
+      const result = await this.evaluate({ userConstraints: request.constraints, subjects }, questions, signal);
+      return subjects
+        .filter(s => result.answers[s.activityId]?.choice !== 'pass')
+        .map(s => {
+          const ans = result.answers[s.activityId];
+          return {
+            checkId: 'accessibility_fit',
+            status: (ans?.confidence ?? 0) >= 0.5 ? ans?.choice as 'flag' | 'unknown' : 'unknown',
+            subjectIds: [s.activityId],
+            message: ans?.choice === 'flag'
+              ? `${s.placeName} may not meet your accessibility requirements.`
+              : `Accessibility fit for ${s.placeName} could not be confirmed.`,
+            condition: 'Place must meet the user\'s accessibility requirements.',
+            evidence: [`accessibilityInfo: ${JSON.stringify(s.accessibilityInfo)}`, `constraints: ${request.constraints}`],
+            repairHint: 'Replace with a confirmed accessible alternative.',
+          };
+        });
+    } catch {
+      signal.throwIfAborted();
+      return [];
+    }
+  }
+
+  /** Deterministic opening hours check for fixture mode. */
+  private checkHoursDeterministic(
+    schedule: ActivitySchedule[],
+    candidates: Place[],
+  ): Issue[] {
+    return schedule.flatMap(entry => {
+      const place = candidates.find(p => p.id === entry.placeId);
+      if (!place?.formattedOpeningHours) return [];
+      const slots = place.formattedOpeningHours[entry.dayOfWeek] ?? [];
+      if (slots.length === 0) {
+        return [{
+          checkId: 'opening_hours_fit',
+          status: 'flag' as const,
+          subjectIds: [entry.activityId],
+          message: `${place.name} appears to be closed on ${entry.dayOfWeek}s.`,
+          condition: 'Visit must fall within confirmed opening hours.',
+          evidence: [`day: ${entry.dayOfWeek}`, `place: ${place.name}`, 'No hours listed for this day'],
+          repairHint: 'Replace with an alternative open on this day, or adjust the visit day.',
+        }];
+      }
+      const visitStart = entry.scheduledStart.slice(11, 16);
+      const visitEnd = entry.scheduledEnd.slice(11, 16);
+      const fits = slots.some(slot => visitStart >= slot.open && visitEnd <= slot.close);
+      if (!fits) {
+        return [{
+          checkId: 'opening_hours_fit',
+          status: 'flag' as const,
+          subjectIds: [entry.activityId],
+          message: `${place.name} is scheduled outside its opening hours (${entry.dayOfWeek} ${visitStart}–${visitEnd}).`,
+          condition: 'Visit must fall within confirmed opening hours.',
+          evidence: [`scheduled: ${visitStart}–${visitEnd}`, `hours: ${JSON.stringify(slots)}`],
+          repairHint: 'Adjust the visit time or duration to fit opening hours.',
+        }];
+      }
+      return [];
+    });
   }
 }
 

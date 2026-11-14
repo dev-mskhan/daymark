@@ -992,6 +992,39 @@ button:disabled {
   font-size: 12px;
   text-transform: capitalize;
 }
+/* Task 2.10: Verification badges */
+.verification-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: default;
+}
+.badge-verified {
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+.badge-warning {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+.badge-info {
+  background: rgba(96, 165, 250, 0.12);
+  color: #60a5fa;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+}
 .issue {
   display: flex;
   align-items: flex-start;
@@ -1148,4 +1181,141 @@ button:disabled {
   .mode-switch button {
     transition: none;
   }
+}
+
+/* ── Priority 4: Multi-Day UI ───────────────────────────────────────────────── */
+
+/* Task 4.23: Day accordion */
+.day-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.day-accordion-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.day-accordion-item--open {
+  border-color: var(--accent);
+}
+.day-accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  transition: background 0.15s;
+}
+.day-accordion-header:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.04));
+}
+.day-accordion-caret {
+  color: var(--dim);
+  flex-shrink: 0;
+}
+.day-accordion-label {
+  flex: 1;
+}
+.day-accordion-date {
+  font-weight: 400;
+  color: var(--dim);
+  font-size: 13px;
+}
+.day-accordion-flag {
+  font-size: 12px;
+  color: var(--warning, #fbbf24);
+  font-weight: 700;
+}
+.day-accordion-overnight {
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+/* Task 4.24: Per-day dial */
+.day-accordion-panel {
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--line);
+}
+.day-accordion-dial {
+  max-width: 180px;
+  margin: 0 auto 12px;
+}
+.day-accordion-origin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dim);
+  margin-bottom: 10px;
+}
+
+/* Task 4.23: Activity list inside accordion */
+.day-accordion-activities {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.day-accordion-activity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--surface, rgba(255,255,255,0.03));
+  transition: background 0.1s;
+}
+.day-accordion-activity:hover {
+  background: var(--surface-hover, rgba(255,255,255,0.07));
+}
+.day-accordion-activity--flagged {
+  border-left: 3px solid var(--warning, #fbbf24);
+}
+.day-accordion-activity-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.day-accordion-activity-name {
+  flex: 1;
+  font-weight: 500;
+}
+.day-accordion-activity-dur {
+  color: var(--dim);
+  font-size: 12px;
+}
+.day-accordion-empty {
+  color: var(--dim);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+/* Task 4.26: Overnight marker */
+.day-accordion-overnight-marker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(96,165,250,0.08);
+  color: #60a5fa;
+  font-size: 13px;
+  border: 1px solid rgba(96,165,250,0.2);
 }

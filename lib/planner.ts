@@ -3,7 +3,8 @@ import { PlacesProvider } from './providers/places';
 import { RoutesProvider } from './providers/routes';
 import { PlannerProvider } from './providers/planner';
 import { JevProvider } from './providers/jev';
-import { summarizeTiming, retainDiverseCandidates, nearbyCandidates } from './planning-context';
+import { PlaceDetailsProvider } from './providers/place-details';
+import { summarizeTiming, retainDiverseCandidates, nearbyCandidates, buildCaveatNotice, detectAccessibilityConstraints } from './planning-context';
 import type { PlanningContext } from './domain';
 import { EXPERIENCE_TYPES } from './search-lenses';
 
@@ -15,9 +16,10 @@ export function validateProposal(proposal: Proposal, current: Activity[], candid
 }
 export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) => void = () => {}, signal = new AbortController().signal): Promise<RunResult> {
   const fixture = request.mode !== 'live';
-  if (!fixture && (!process.env.GROQ_API_KEY || !process.env.GROQ_MODEL || !process.env.TYPESAFE_API_KEY)) throw new Error('Live mode requires GROQ_API_KEY, GROQ_MODEL, and TYPESAFE_API_KEY.');
+  if (!fixture && (!process.env.GROQ_API_KEY || !process.env.GROQ_MODEL || !(process.env.JEV_API_KEY ?? process.env.TYPESAFE_API_KEY))) throw new Error('Live mode requires GROQ_API_KEY, GROQ_MODEL, and JEV_API_KEY.');
   const planner = new PlannerProvider(fixture), jev = new JevProvider(fixture);
   const places = new PlacesProvider(fixture, signal);
+  const detailsProvider = new PlaceDetailsProvider(fixture, signal);
   const routeCache = new Map<string, TransportOption[]>();
   const transportChoiceCache = new Map<string, TransportOption>();
   const events: RunEvent[] = [], started = performance.now();
@@ -49,6 +51,22 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
     pool = retainDiverseCandidates(labelled);
     emit({ type: 'screen_end', actor: 'Jev', message: screened.map(p => `${p.place.name}: ${p.label}`).join(' · ') });
   } catch { signal.throwIfAborted(); emit({ type: 'screen_unknown', actor: 'Jev', message: 'Candidate screening was unavailable. All candidates remain, marked unknown.' }); }
+  
+  // Task 2.5: Enrich priority candidates with opening hours, timezone, etc.
+  emit({ type: 'enrich_start', actor: 'Controller', message: 'Fetching opening hours and place details for candidates.' });
+  try {
+    const priorityCandidates = pool.slice(0, 15); // enrich top candidates only
+    const enriched = await detailsProvider.enrichCandidates(priorityCandidates);
+    const enrichedIds = new Set(enriched.map(p => p.id));
+    // Replace originals with enriched versions in pool and candidates arrays
+    const enrichedMap = new Map(enriched.map(p => [p.id, p]));
+    pool = pool.map(p => enrichedMap.get(p.id) ?? p);
+    for (let i = 0; i < candidates.length; i++) {
+      if (enrichedIds.has(candidates[i].id)) candidates[i] = enrichedMap.get(candidates[i].id)!;
+    }
+    const verifiedCount = enriched.filter(p => p.formattedOpeningHours).length;
+    emit({ type: 'enrich_end', actor: 'Controller', message: `Opening hours verified for ${verifiedCount} of ${priorityCandidates.length} candidates.` });
+  } catch { signal.throwIfAborted(); emit({ type: 'enrich_unknown', actor: 'Controller', message: 'Place details enrichment was unavailable. Opening hours unverified.' }); }
   const routeOptions = async (from: Place, to: Place, routeSignal = signal): Promise<TransportOption[]> => {
     const key = `${from.id}|${to.id}`;
     if (routeCache.has(key)) return routeCache.get(key)!;
@@ -61,7 +79,7 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
   const propose = async (issues: Issue[] = [], proposalSignal = signal) => {
     const base = snapshot;
     emit({ type: issues.length ? 'repair_start' : 'planning_start', actor: 'LLM', version: base.version, message: issues.length ? 'Revising the current draft from review feedback.' : `Planning activity ${base.activities.length + 1}.` });
-    const context: PlanningContext = { version: base.version, timing: summarizeTiming(request, base.activities, base.routes), candidateRoutes: [] };
+    const context: PlanningContext = { version: base.version, timing: summarizeTiming(request, base.activities, base.routes, null, null, candidates), candidateRoutes: [] };
     let proposalPool = pool;
     if (!issues.length && base.activities.length && !fixture) {
       emit({ type: 'route_context', actor: 'Controller', version: base.version, message: 'Loading walking and transit options for nearby candidates.' });
@@ -192,7 +210,7 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
     if (returnLeg && !returnLeg.selected) issues.push({ checkId: 'return_leg_unknown', status: 'unknown', subjectIds: [], message: 'Return travel from last stop to origin not verified.' });
     const fullJourneyMinutes = (firstLeg?.selected?.durationMinutes ?? 0) + proposal.activities.reduce((n, a) => n + a.durationMinutes, 0) + walking.reduce<number>((n, t) => n + (t ?? 0), 0) + (returnLeg?.selected?.durationMinutes ?? 0);
     const available = (Date.parse(request.endAt + 'Z') - Date.parse(request.startAt + 'Z')) / 60000;
-    if (fullJourneyMinutes > available) issues.push({ checkId: 'time_window', status: 'flag', subjectIds: proposal.activities.map(a => a.id), message: `Full journey ${fullJourneyMinutes} min exceeds ${available} min window. Shorten or reduce activities.`, condition: 'Full journey including origin and return travel must fit the time window.', evidence: [JSON.stringify(summarizeTiming(request, proposal.activities, walking, firstLeg?.selected?.durationMinutes ?? null, returnLeg?.selected?.durationMinutes ?? null))], repairHint: 'Remove or shorten activities causing longest routes; keep must-visit requirements, reduce count if needed.'  });
+    if (fullJourneyMinutes > available) issues.push({ checkId: 'time_window', status: 'flag', subjectIds: proposal.activities.map(a => a.id), message: `Full journey ${fullJourneyMinutes} min exceeds ${available} min window. Shorten or reduce activities.`, condition: 'Full journey including origin and return travel must fit the time window.', evidence: [JSON.stringify(summarizeTiming(request, proposal.activities, walking, firstLeg?.selected?.durationMinutes ?? null, returnLeg?.selected?.durationMinutes ?? null, candidates))], repairHint: 'Remove or shorten activities causing longest routes; keep must-visit requirements, reduce count if needed.'  });
     snapshot = { version: snapshot.version + 1, activities: proposal.activities, routes: walking, transportLegs, issues, origin: originPoint, firstLeg, returnLeg };
     emit({ type: 'snapshot', actor: 'Controller', version: snapshot.version, message: 'Draft committed. Starting node review.', snapshot });
   };
@@ -203,15 +221,36 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
     const base = snapshot;
     emit({ type: 'review_start', actor: 'Jev', version: base.version, message: 'Reviewing the current node and, at stage boundaries, the whole draft.' });
     const reviewPromise = Promise.all(([ 'local', ...(base.activities.length % 2 === 0 || proposal.done || repaired ? ['global'] : []) ] as ('local' | 'global')[]).map(async scope => {
-      const review = await jev.review(request, candidates, base.activities, base.version, scope, signal, proposal.done, repaired, summarizeTiming(request, base.activities, base.routes));
+      const review = await jev.review(request, candidates, base.activities, base.version, scope, signal, proposal.done, repaired, summarizeTiming(request, base.activities, base.routes, null, null, candidates));
       emit({ type: 'review_end', actor: 'Jev', version: review.version, message: `${scope === 'local' ? 'Local' : 'Global'} review: ${review.status}`, review, latencyMs: review.latencyMs });
       return review;
     }));
+
+    // Task 3.6, 3.11: Opening hours validation — run on global reviews and final draft
+    const hoursValidationPromise = (proposal.done || base.activities.length % 2 === 0 || repaired)
+      ? jev.validateOpeningHours(request, candidates, base.activities, base.routes, base.version, signal, snapshot.firstLeg?.selected?.durationMinutes ?? null)
+          .then(issues => {
+            if (issues.length) emit({ type: 'opening_hours_check', actor: 'Jev', version: base.version, message: `Opening hours check: ${issues.filter(i => i.status === 'flag').length} conflict(s), ${issues.filter(i => i.status === 'unknown').length} unknown.` });
+            return issues;
+          })
+          .catch(() => { signal.throwIfAborted(); return [] as Issue[]; })
+      : Promise.resolve([] as Issue[]);
+
+    // Task 3.8, 3.12: Accessibility validation — only when constraints mention accessibility
+    const accessibilityValidationPromise = (proposal.done && detectAccessibilityConstraints(request.constraints))
+      ? jev.validateAccessibility(request, candidates, base.activities, base.version, signal)
+          .then(issues => {
+            if (issues.length) emit({ type: 'accessibility_check', actor: 'Jev', version: base.version, message: `Accessibility check: ${issues.filter(i => i.status === 'flag').length} concern(s).` });
+            return issues;
+          })
+          .catch(() => { signal.throwIfAborted(); return [] as Issue[]; })
+      : Promise.resolve([] as Issue[]);
     // One speculative node only. Capture rejection immediately so it cannot become unhandled.
     const speculativeAbort = new AbortController();
     const ahead = !proposal.done ? propose([], AbortSignal.any([signal, speculativeAbort.signal])).then(value => ({ value, error: null }), error => ({ value: null, error })) : null;
-    const reviews = await reviewPromise;
-    snapshot = { ...base, issues: [...new Map([...base.issues, ...reviews.flatMap(r => r.issues)].map(issue => [JSON.stringify([issue.checkId, issue.status, issue.subjectIds]), issue])).values()] };
+    const [reviews, hoursIssues, accessibilityIssues] = await Promise.all([reviewPromise, hoursValidationPromise, accessibilityValidationPromise]);
+    const allNewIssues = [...reviews.flatMap(r => r.issues), ...hoursIssues, ...accessibilityIssues];
+    snapshot = { ...base, issues: [...new Map([...base.issues, ...allNewIssues].map(issue => [JSON.stringify([issue.checkId, issue.status, issue.subjectIds]), issue])).values()] };
     emit({ type: 'snapshot', actor: 'Controller', version: snapshot.version, message: 'Review results attached to the current version.', snapshot });
     const flagged = snapshot.issues.filter(i => i.status === 'flag');
     if (flagged.length) {
@@ -240,11 +279,8 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
   }
   if (!proposal.done) snapshot = { ...snapshot, issues: [...snapshot.issues, { checkId: 'incomplete', status: 'unknown', subjectIds: [], message: '规划提前停止，当前行程尚未完成。' }] };
   const result: RunResult = { status: 'needs_attention', snapshot, candidates, events };
-  const hasOriginVerified = originPoint && snapshot.firstLeg?.selected && snapshot.returnLeg?.selected;
-  const caveatParts: string[] = ['Opening hours'];
-  if (!hasOriginVerified) caveatParts.push('origin/destination travel');
-  caveatParts.push('timezone');
-  emit({ type: 'complete', actor: 'Controller', version: snapshot.version, message: `Planning complete. ${caveatParts.join(', ')} remain unverified; this is still a draft.`, snapshot });
+  const caveatMessage = buildCaveatNotice(snapshot, candidates);
+  emit({ type: 'complete', actor: 'Controller', version: snapshot.version, message: `Planning complete. ${caveatMessage}`, snapshot });
   return result;
 }
 

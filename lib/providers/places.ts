@@ -262,17 +262,17 @@ function deduplicate(places: Place[]) {
 }
 function demoPlaces(destination: string): Place[] {
   const center = { latitude: 40.758, longitude: -73.9855 };
-  const names = [
-    ["The Metropolitan Museum of Art", ["museum", "art"]],
-    ["Central Park", ["park", "nature"]],
-    ["Chelsea Gallery Row", ["art_gallery", "art"]],
-    ["Chelsea Market", ["market", "food"]],
-    ["The High Line", ["park", "architecture"]],
-    ["Washington Square Park", ["park", "local_life"]],
-    ["Greenwich Village Restaurant", ["restaurant", "food"]],
-    ["Empire State Building", ["landmark", "architecture"]],
-  ] as const;
-  return names.map(([name, types], index) => ({
+  const names: [string, string[], string][] = [
+    ['The Metropolitan Museum of Art', ['museum', 'art'], 'Mo-Tu,Th-Su 10:00-17:00; Fr-Sa 10:00-21:00; We closed'],
+    ['Central Park', ['park', 'nature'], '24/7'],
+    ['Chelsea Gallery Row', ['art_gallery', 'art'], 'Tu-Sa 10:00-18:00'],
+    ['Chelsea Market', ['market', 'food'], 'Mo-Sa 07:00-21:00; Su 08:00-20:00'],
+    ['The High Line', ['park', 'architecture'], '07:00-22:00'],
+    ['Washington Square Park', ['park', 'local_life'], '24/7'],
+    ['Greenwich Village Restaurant', ['restaurant', 'food'], 'Mo-Su 11:30-22:00'],
+    ['Empire State Building', ['landmark', 'architecture'], 'Mo-Su 09:00-23:00'],
+  ];
+  return names.map(([name, types, openingHoursRaw], index) => ({
     id: `demo-${index}`,
     name,
     address: `${destination} · Demo location`,
@@ -280,6 +280,11 @@ function demoPlaces(destination: string): Place[] {
     longitude: center.longitude + Math.cos(index) * 0.018,
     types: [...types],
     rating: 4.1 + (index % 4) * 0.2,
-    source: "demo",
+    source: 'demo' as const,
+    openingHours: openingHoursRaw,
+    timezone: 'America/New_York',
+    operationalStatus: 'operational' as const,
+    lastVerified: '2026-01-01T00:00:00Z',
+    accessibilityInfo: { wheelchairAccessible: index % 3 !== 2 },
   }));
 }
