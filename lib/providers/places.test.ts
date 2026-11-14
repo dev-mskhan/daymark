@@ -146,3 +146,58 @@ describe('PlacesProvider geocoding', () => {
     );
   });
 });
+
+describe('PlacesProvider discovery (Geoapify)', () => {
+  const feature = (n: number, extra: Record<string, unknown> = {}) => ({
+    properties: {
+      place_id: `pid-${n}`,
+      name: `Place ${n}`,
+      formatted: `${n} Main St, New York, NY`,
+      lat: 40.7 + n / 1000,
+      lon: -73.9 - n / 1000,
+      categories: ['tourism.sights'],
+      ...extra,
+    },
+  });
+  const geocodeBody = { features: [{ properties: { lat: 40.7128, lon: -74.006, formatted: 'New York, NY, USA', rank: { confidence: 0.95 } } }] };
+
+  it('normalizes Geoapify places into candidates', async () => {
+    vi.stubEnv('GEOAPIFY_API_KEY', 'test-key');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input =>
+      String(input).includes('/v1/geocode/')
+        ? Response.json(geocodeBody)
+        : Response.json({ features: [feature(1, { opening_hours: 'Mo-Su 09:00-17:00' }), feature(2), feature(3), { properties: { name: 'No id' } }] }),
+    );
+    const places = await new PlacesProvider(false).discover('New York City', ['iconic']);
+    expect(places).toHaveLength(3);
+    expect(places[0]).toMatchObject({ id: 'geoapify:pid-1', name: 'Place 1', source: 'geoapify', openingHours: 'Mo-Su 09:00-17:00' });
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('categories=tourism.sights'), expect.any(Object));
+  });
+
+  it('continues when one category fails', async () => {
+    vi.stubEnv('GEOAPIFY_API_KEY', 'test-key');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/v1/geocode/')) return Response.json(geocodeBody);
+      return url.includes('leisure.park') ? new Response('', { status: 400 }) : Response.json({ features: [feature(1), feature(2), feature(3)] });
+    });
+    const places = await new PlacesProvider(false).discover('New York City', ['iconic', 'nature']);
+    expect(places.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('explains when too few places are found', async () => {
+    vi.stubEnv('GEOAPIFY_API_KEY', 'test-key');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input =>
+      String(input).includes('/v1/geocode/') ? Response.json(geocodeBody) : Response.json({ features: [feature(1)] }),
+    );
+    await expect(new PlacesProvider(false).discover('New York City', ['iconic'])).rejects.toThrow('could not find enough places');
+  });
+
+  it('surfaces malformed provider responses', async () => {
+    vi.stubEnv('GEOAPIFY_API_KEY', 'test-key');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async input =>
+      String(input).includes('/v1/geocode/') ? Response.json(geocodeBody) : Response.json({ unexpected: true }),
+    );
+    await expect(new PlacesProvider(false).discover('New York City', ['iconic'])).rejects.toThrow('malformed');
+  });
+});

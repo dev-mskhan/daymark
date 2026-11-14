@@ -16,7 +16,7 @@ const mono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Daymark",
   description:
-    "Plan one day in a mainland Chinese city. An LLM proposes each stop and Jev checks it against your preferences and travel times.",
+    "Plan a day in a US city. An LLM proposes each stop and Jev checks it against your preferences, opening hours and travel times.",
 };
 
 export default function RootLayout({

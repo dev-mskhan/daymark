@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -14,8 +14,10 @@ import {
   Pause,
   PersonSimpleWalk,
   Play,
+  Moon,
   SealCheck,
   Stop,
+  Sun,
   Train,
   WarningCircle,
   X,
@@ -27,9 +29,11 @@ import type {
   RunEvent,
   Snapshot,
 } from "@/lib/domain";
-import { AmapMap } from "@/app/components/AmapMap";
+import { GeoapifyMap } from "@/app/components/GeoapifyMap";
 import { DayDial, type DialStop } from "@/app/components/DayDial";
 import { DayAccordion } from "@/app/components/DayAccordion";
+import { AccountMenu } from "@/app/components/AccountMenu";
+import { useAccount } from "@/lib/auth/use-account";
 
 const defaults = {
   origin: "Penn Station, New York City",
@@ -60,6 +64,9 @@ export default function Home() {
   const [accepted, setAccepted] = useState<Snapshot | null>(null);
   const [showCoverage, setShowCoverage] = useState(false);
   const [coverageDismissed, setCoverageDismissed] = useState(false);
+  const [isDarkTheme, setIsDarkTheme] = useState(false);
+  const [themeStorageWarning, setThemeStorageWarning] = useState("");
+  const themePreference = useRef<"system" | "light" | "dark">("system");
   // Multi-day state (Task 4.27-4.28)
   const [multiDaySegments, setMultiDaySegments] = useState<DaySegment[]>([]);
   const [activeDay, setActiveDay] = useState(1);
@@ -117,6 +124,68 @@ export default function Home() {
     );
     return () => window.clearTimeout(timer);
   }, [cursor, events.length, replaying]);
+
+  const applyTheme = useCallback(() => {
+    const isDark =
+      themePreference.current === "system"
+        ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        : themePreference.current === "dark";
+    document.documentElement.dataset.theme = isDark ? "dark" : "light";
+    setIsDarkTheme(isDark);
+  }, []);
+
+  useEffect(() => {
+    const colorScheme = window.matchMedia("(prefers-color-scheme: dark)");
+    try {
+      const saved = window.localStorage.getItem("daymark-theme");
+      if (saved === "light" || saved === "dark") themePreference.current = saved;
+    } catch {
+      setThemeStorageWarning(
+        "Theme preference storage is unavailable; using the system preference.",
+      );
+    }
+    applyTheme();
+    colorScheme.addEventListener("change", applyTheme);
+    return () => colorScheme.removeEventListener("change", applyTheme);
+  }, [applyTheme]);
+
+  // Task 5.18: signed-in users keep their theme preference on their profile.
+  const account = useAccount();
+  const accountId = account.user?.id;
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    (async () => {
+      const response = await fetch("/api/profile");
+      if (!response.ok || cancelled) return;
+      const saved = (await response.json()).profile?.themePreference as
+        | "system"
+        | "light"
+        | "dark"
+        | undefined;
+      if (!saved || cancelled) return;
+      if (saved === "system" && themePreference.current !== "system") {
+        // First sign-in on a device with a chosen theme: keep it and store it on the profile.
+        await fetch("/api/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ themePreference: themePreference.current }),
+        });
+        return;
+      }
+      themePreference.current = saved;
+      try {
+        if (saved === "system") window.localStorage.removeItem("daymark-theme");
+        else window.localStorage.setItem("daymark-theme", saved);
+      } catch {
+        /* the profile remains the source of truth */
+      }
+      applyTheme();
+    })().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, applyTheme]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -245,21 +314,65 @@ export default function Home() {
     setShowCoverage(next === "live" && !coverageDismissed);
   }
 
+  function toggleTheme() {
+    const next = isDarkTheme ? "light" : "dark";
+    themePreference.current = next;
+    document.documentElement.dataset.theme = next;
+    setIsDarkTheme(next === "dark");
+    try {
+      window.localStorage.setItem("daymark-theme", next);
+      setThemeStorageWarning("");
+    } catch {
+      setThemeStorageWarning(
+        "Theme changed for this session, but the preference could not be saved.",
+      );
+    }
+    if (account.user)
+      fetch("/api/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ themePreference: next }),
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error("save failed");
+        })
+        .catch(() =>
+          setThemeStorageWarning(
+            "Theme changed, but it could not be saved to your account.",
+          ),
+        );
+  }
+
   return (
     <main>
       <header className="site-nav">
         <div className="brand">
           <span className="brand-mark">D</span>Daymark
         </div>
-        <a
-          className="icon-button"
-          href="https://github.com/dev-mskhan/daymark"
-          target="_blank"
-          rel="noreferrer"
-          aria-label="View Daymark on GitHub"
-        >
-          <GithubLogo size={22} weight="regular" />
-        </a>
+        <div className="nav-actions">
+          <button
+            className="icon-button"
+            type="button"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${isDarkTheme ? "light" : "dark"} theme`}
+            title={`Switch to ${isDarkTheme ? "light" : "dark"} theme`}
+          >
+            {isDarkTheme ? <Sun size={21} /> : <Moon size={21} />}
+          </button>
+          <span className="visually-hidden" role="status">
+            {themeStorageWarning}
+          </span>
+          <AccountMenu account={account} />
+          <a
+            className="icon-button"
+            href="https://github.com/dev-mskhan/daymark"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="View Daymark on GitHub"
+          >
+            <GithubLogo size={22} weight="regular" />
+          </a>
+        </div>
       </header>
 
       {!started ? (
@@ -301,9 +414,9 @@ export default function Home() {
                     <Info size={18} />
                   </span>
                   <div>
-                    <strong>Mainland China only</strong>
+                    <strong>US destinations</strong>
                     <p>
-                      Live planning covers destinations across mainland China.
+                      Live planning covers US cities, using Geoapify places and routes.
                     </p>
                   </div>
                   <button
@@ -481,7 +594,7 @@ export default function Home() {
               className={`mode-chip ${mode === "live" ? "mode-chip-live" : ""}`}
             >
               {mode === "live"
-                ? "Live models and Amap data"
+                ? "Live models and Geoapify data"
                 : "Replay with simulated LLM and Jev"}
             </div>
           </div>
@@ -503,7 +616,7 @@ export default function Home() {
               <div className="map-ring">
                 <div className="map-stage">
                   {mode === "live" ? (
-                    <AmapMap points={points} />
+                    <GeoapifyMap points={points} isDarkTheme={isDarkTheme} />
                   ) : (
                     <FixturePlot points={points} positions={positions} />
                   )}
@@ -511,7 +624,7 @@ export default function Home() {
               </div>
               <p className="map-note">
                 {mode === "live"
-                  ? "Map data from Amap. The dashed line shows stop order, not the route."
+                  ? "Map data from Geoapify and OpenStreetMap. The line shows stop order, not the route."
                   : "Sample data. Positions are schematic and the dashed line is not a route."}
               </p>
               <div className="run-status">
@@ -822,9 +935,7 @@ export default function Home() {
                             target="_blank"
                             rel="noreferrer"
                           >
-                            {place.source === "amap"
-                              ? "View on Amap"
-                              : "View on OpenStreetMap"}
+                            View on OpenStreetMap
                             <ArrowUpRight size={14} />
                           </a>
                         )}
@@ -1164,8 +1275,8 @@ function formatTime(start: string, offset: number) {
 }
 
 function placeUrl(place: Place) {
-  if (place.source === "amap")
-    return `https://uri.amap.com/marker?position=${place.longitude},${place.latitude}&name=${encodeURIComponent(place.name)}`;
+  if (place.source === "geoapify")
+    return `https://www.openstreetmap.org/?mlat=${place.latitude}&mlon=${place.longitude}#map=18/${place.latitude}/${place.longitude}`;
   const [, type, id] = place.id.split(":");
   return `https://www.openstreetmap.org/${({ N: "node", W: "way", R: "relation" } as Record<string, string>)[type] ?? "node"}/${id}`;
 }

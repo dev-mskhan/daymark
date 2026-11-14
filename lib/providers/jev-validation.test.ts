@@ -3,7 +3,7 @@
  * Tasks 3.14 (opening hours validation) and 3.15 (accessibility validation)
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { JevProvider } from './jev';
 import { buildDetailedSchedule, detectAccessibilityConstraints } from '../planning-context';
 import type { Activity, Place, TripRequest } from '../domain';
@@ -41,6 +41,11 @@ function makePlace(id: string, overrides: Partial<Place> = {}): Place {
 
 const signal = new AbortController().signal;
 const jev = new JevProvider(true); // fixture mode
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 // ─── Task 3.14: Opening hours validation edge cases ──────────────────────────
 
@@ -173,6 +178,104 @@ describe('validateAccessibility (fixture mode)', () => {
     const issues = await jev.validateAccessibility(request, [place], activities, 1, signal);
     const unknowns = issues.filter(i => i.status === 'unknown' && i.checkId === 'accessibility_fit');
     expect(unknowns.length).toBeGreaterThan(0);
+  });
+
+  it('marks missing information unknown when other activities have provider data', async () => {
+    const request = makeRequest({ constraints: 'wheelchair accessible only' });
+    const activities = [makeActivity('a1', 'p1'), makeActivity('a2', 'p2')];
+    const places = [
+      makePlace('p1', { accessibilityInfo: { wheelchairAccessible: true } }),
+      makePlace('p2'),
+    ];
+
+    const issues = await jev.validateAccessibility(request, places, activities, 1, signal);
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      checkId: 'accessibility_fit',
+      status: 'unknown',
+      subjectIds: ['a2'],
+    }));
+  });
+});
+
+describe('validateOpeningHours (live JevStation)', () => {
+  it('accepts JevStation response envelopes', async () => {
+    vi.stubEnv('JEV_API_KEY', 'test-key');
+    vi.stubEnv('JEV_BASE_URL', 'https://jevstation.com/api');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 0,
+      message: 'ok',
+      data: {
+        model: 'jev-1.13.0',
+        answers: {
+          a1: {
+            type: 'choice',
+            choice: 'pass',
+            probabilities: { pass: 0.95, flag: 0.03, unknown: 0.02 },
+            confidence: 0.95,
+          },
+        },
+      },
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new JevProvider(false);
+    const request = makeRequest({ mode: 'live', startAt: '2026-10-12T10:00:00' });
+    const activities = [makeActivity('a1', 'p1')];
+    const place = makePlace('p1', {
+      formattedOpeningHours: { monday: [{ open: '09:00', close: '18:00' }] },
+    });
+
+    const issues = await provider.validateOpeningHours(request, [place], activities, [], 1, signal);
+
+    expect(issues).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://jevstation.com/api/v1/systemone',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
+      }),
+    );
+  });
+
+  it('returns an unknown validation issue when JevStation rejects the evaluation', async () => {
+    vi.stubEnv('JEV_API_KEY', 'test-key');
+    vi.stubEnv('JEV_BASE_URL', 'https://jevstation.com/api');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: -1,
+      message: 'credits exhausted',
+    }), { status: 200 })));
+    const provider = new JevProvider(false);
+    const request = makeRequest({ mode: 'live', startAt: '2026-10-12T10:00:00' });
+    const activities = [makeActivity('a1', 'p1')];
+    const place = makePlace('p1', {
+      formattedOpeningHours: { monday: [{ open: '09:00', close: '18:00' }] },
+    });
+
+    const issues = await provider.validateOpeningHours(request, [place], activities, [], 1, signal);
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      checkId: 'opening_hours_fit',
+      status: 'unknown',
+      subjectIds: ['a1'],
+      message: expect.stringContaining('could not be completed'),
+    }));
+    expect(issues[0].evidence).toContain('Jev request failed: credits exhausted');
+  });
+
+  it('marks activities without opening-hour data unknown when others have data', async () => {
+    const request = makeRequest();
+    const activities = [makeActivity('a1', 'p1'), makeActivity('a2', 'p2')];
+    const places = [
+      makePlace('p1', { formattedOpeningHours: { monday: [{ open: '09:00', close: '18:00' }] } }),
+      makePlace('p2'),
+    ];
+
+    const issues = await jev.validateOpeningHours(request, places, activities, [], 1, signal);
+
+    expect(issues).toContainEqual(expect.objectContaining({
+      checkId: 'opening_hours_fit',
+      status: 'unknown',
+      subjectIds: ['a2'],
+    }));
   });
 });
 

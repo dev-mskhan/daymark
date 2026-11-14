@@ -1,0 +1,696 @@
+{
+  "id": "1443eb6c-159a-46ef-bf63-e3149dee0471",
+  "prevId": "2f4fa765-2227-43cd-8538-074ec8b6714c",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.day_boundary": {
+      "name": "day_boundary",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "trip_id": {
+          "name": "trip_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "day_number": {
+          "name": "day_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "date": {
+          "name": "date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "overnight_place_id": {
+          "name": "overnight_place_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "overnight_place_data": {
+          "name": "overnight_place_data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "day_boundary_trip_id_trip_id_fk": {
+          "name": "day_boundary_trip_id_trip_id_fk",
+          "tableFrom": "day_boundary",
+          "tableTo": "trip",
+          "columnsFrom": [
+            "trip_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "day_boundary_trip_day_unique": {
+          "name": "day_boundary_trip_day_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "trip_id",
+            "day_number"
+          ]
+        }
+      },
+      "policies": {
+        "day_boundary_via_trip": {
+          "name": "day_boundary_via_trip",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "authenticated"
+          ],
+          "using": "exists (select 1 from \"trip\" where \"trip\".\"id\" = \"day_boundary\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid()))",
+          "withCheck": "exists (select 1 from \"trip\" where \"trip\".\"id\" = \"day_boundary\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid()))"
+        }
+      },
+      "checkConstraints": {
+        "day_boundary_day_check": {
+          "name": "day_boundary_day_check",
+          "value": "\"day_boundary\".\"day_number\" between 1 and 7"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.day_segment": {
+      "name": "day_segment",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "trip_revision_id": {
+          "name": "trip_revision_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "day_number": {
+          "name": "day_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "activities": {
+          "name": "activities",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "routes": {
+          "name": "routes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transport_legs": {
+          "name": "transport_legs",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starting_from": {
+          "name": "starting_from",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ending_at": {
+          "name": "ending_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "snapshot_json": {
+          "name": "snapshot_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "events_json": {
+          "name": "events_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "day_segment_trip_revision_id_trip_revision_id_fk": {
+          "name": "day_segment_trip_revision_id_trip_revision_id_fk",
+          "tableFrom": "day_segment",
+          "tableTo": "trip_revision",
+          "columnsFrom": [
+            "trip_revision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "day_segment_revision_day_unique": {
+          "name": "day_segment_revision_day_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "trip_revision_id",
+            "day_number"
+          ]
+        }
+      },
+      "policies": {
+        "day_segment_via_revision": {
+          "name": "day_segment_via_revision",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "authenticated"
+          ],
+          "using": "exists (select 1 from \"trip_revision\" where \"trip_revision\".\"id\" = \"day_segment\".\"trip_revision_id\" and exists (select 1 from \"trip\" where \"trip\".\"id\" = \"trip_revision\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid())))",
+          "withCheck": "exists (select 1 from \"trip_revision\" where \"trip_revision\".\"id\" = \"day_segment\".\"trip_revision_id\" and exists (select 1 from \"trip\" where \"trip\".\"id\" = \"trip_revision\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid())))"
+        }
+      },
+      "checkConstraints": {
+        "day_segment_day_check": {
+          "name": "day_segment_day_check",
+          "value": "\"day_segment\".\"day_number\" between 1 and 7"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.planning_run": {
+      "name": "planning_run",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "trip_id": {
+          "name": "trip_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "events_json": {
+          "name": "events_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "result_json": {
+          "name": "result_json",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_message": {
+          "name": "error_message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "planning_run_trip_idx": {
+          "name": "planning_run_trip_idx",
+          "columns": [
+            {
+              "expression": "trip_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "planning_run_trip_id_trip_id_fk": {
+          "name": "planning_run_trip_id_trip_id_fk",
+          "tableFrom": "planning_run",
+          "tableTo": "trip",
+          "columnsFrom": [
+            "trip_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "planning_run_owner_read": {
+          "name": "planning_run_owner_read",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "exists (select 1 from \"trip\" where \"trip\".\"id\" = \"planning_run\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid()))"
+        },
+        "planning_run_owner_insert": {
+          "name": "planning_run_owner_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "exists (select 1 from \"trip\" where \"trip\".\"id\" = \"planning_run\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid()))"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.trip": {
+      "name": "trip",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'fixture'"
+        },
+        "destination": {
+          "name": "destination",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "party_size": {
+          "name": "party_size",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "preference": {
+          "name": "preference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "constraints": {
+          "name": "constraints",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "trip_owner_idx": {
+          "name": "trip_owner_idx",
+          "columns": [
+            {
+              "expression": "owner_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "trip_owner_id_users_id_fk": {
+          "name": "trip_owner_id_users_id_fk",
+          "tableFrom": "trip",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "trip_owner_all": {
+          "name": "trip_owner_all",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"trip\".\"owner_id\" = (select auth.uid())",
+          "withCheck": "\"trip\".\"owner_id\" = (select auth.uid())"
+        }
+      },
+      "checkConstraints": {
+        "trip_status_check": {
+          "name": "trip_status_check",
+          "value": "\"trip\".\"status\" in ('draft', 'planned', 'accepted', 'archived')"
+        },
+        "trip_party_size_check": {
+          "name": "trip_party_size_check",
+          "value": "\"trip\".\"party_size\" between 1 and 20"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.trip_revision": {
+      "name": "trip_revision",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "trip_id": {
+          "name": "trip_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "planning_run_id": {
+          "name": "planning_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision_number": {
+          "name": "revision_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "trip_revision_trip_id_trip_id_fk": {
+          "name": "trip_revision_trip_id_trip_id_fk",
+          "tableFrom": "trip_revision",
+          "tableTo": "trip",
+          "columnsFrom": [
+            "trip_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "trip_revision_planning_run_id_planning_run_id_fk": {
+          "name": "trip_revision_planning_run_id_planning_run_id_fk",
+          "tableFrom": "trip_revision",
+          "tableTo": "planning_run",
+          "columnsFrom": [
+            "planning_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "trip_revision_trip_number_unique": {
+          "name": "trip_revision_trip_number_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "trip_id",
+            "revision_number"
+          ]
+        }
+      },
+      "policies": {
+        "trip_revision_via_trip": {
+          "name": "trip_revision_via_trip",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "authenticated"
+          ],
+          "using": "exists (select 1 from \"trip\" where \"trip\".\"id\" = \"trip_revision\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid()))",
+          "withCheck": "exists (select 1 from \"trip\" where \"trip\".\"id\" = \"trip_revision\".\"trip_id\" and \"trip\".\"owner_id\" = (select auth.uid())) and (\"trip_revision\".\"planning_run_id\" is null or exists (select 1 from \"planning_run\" where \"planning_run\".\"id\" = \"trip_revision\".\"planning_run_id\" and \"planning_run\".\"trip_id\" = \"trip_revision\".\"trip_id\"))"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.user_profile": {
+      "name": "user_profile",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "theme_preference": {
+          "name": "theme_preference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'system'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "user_profile_id_users_id_fk": {
+          "name": "user_profile_id_users_id_fk",
+          "tableFrom": "user_profile",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "user_profile_own_record": {
+          "name": "user_profile_own_record",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"user_profile\".\"id\" = (select auth.uid())",
+          "withCheck": "\"user_profile\".\"id\" = (select auth.uid())"
+        }
+      },
+      "checkConstraints": {
+        "user_profile_theme_check": {
+          "name": "user_profile_theme_check",
+          "value": "\"user_profile\".\"theme_preference\" in ('light', 'dark', 'system')"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -3,7 +3,7 @@ export interface TripRequest { destination: string; origin?: string; startAt: st
 export interface FormattedOpeningHours { [day: string]: { open: string; close: string }[] }
 export interface AccessibilityInfo { wheelchairAccessible?: boolean; elevator?: boolean; parking?: boolean }
 export type OperationalStatus = 'operational' | 'temporarily_closed' | 'permanently_closed'
-export interface Place { id: string; name: string; address: string; latitude: number; longitude: number; types: string[]; rating?: number; source: 'amap' | 'photon' | 'demo'; cityCode?: string; adcode?: string; openingHours?: string; screeningLabel?: string; timezone?: string; formattedOpeningHours?: FormattedOpeningHours; operationalStatus?: OperationalStatus; accessibilityInfo?: AccessibilityInfo; lastVerified?: string }
+export interface Place { id: string; name: string; address: string; latitude: number; longitude: number; types: string[]; rating?: number; source: 'photon' | 'geoapify' | 'demo'; cityCode?: string; adcode?: string; openingHours?: string; screeningLabel?: string; timezone?: string; formattedOpeningHours?: FormattedOpeningHours; operationalStatus?: OperationalStatus; accessibilityInfo?: AccessibilityInfo; lastVerified?: string }
 export interface Activity { id: string; placeId: string; durationMinutes: number; reason: string }
 export interface TransportOption { id: string; mode: 'walk' | 'transit'; durationMinutes: number; walkingMinutes: number; transfers: number; distanceMeters: number; fareYuan?: number; lines: string[] }
 export interface TransportLeg { fromActivityId: string; toActivityId: string; fromPlaceId: string; toPlaceId: string; selected: TransportOption | null; options: TransportOption[] }

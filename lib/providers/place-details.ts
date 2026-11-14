@@ -215,9 +215,8 @@ export class PlaceDetailsProvider {
     if (!process.env.GEOAPIFY_API_KEY)
       throw new Error('Live mode requires GEOAPIFY_API_KEY.');
 
-    // Geoapify Place Details requires a place_id; for Amap places we use
-    // reverse geocoding first to get one, but skip unsupported sources.
-    // For now we only enrich places that have a Geoapify-compatible id.
+    // Geoapify Place Details requires a place_id. Discovery produces ids prefixed
+    // with `geoapify:`; places from other sources are returned unchanged.
     if (!place.id.startsWith('geoapify:')) return place;
 
     const geoapifyId = place.id.replace('geoapify:', '');

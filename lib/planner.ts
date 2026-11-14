@@ -233,7 +233,7 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
             if (issues.length) emit({ type: 'opening_hours_check', actor: 'Jev', version: base.version, message: `Opening hours check: ${issues.filter(i => i.status === 'flag').length} conflict(s), ${issues.filter(i => i.status === 'unknown').length} unknown.` });
             return issues;
           })
-          .catch(() => { signal.throwIfAborted(); return [] as Issue[]; })
+          .catch(error => { signal.throwIfAborted(); throw error; })
       : Promise.resolve([] as Issue[]);
 
     // Task 3.8, 3.12: Accessibility validation — only when constraints mention accessibility
@@ -243,7 +243,7 @@ export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) 
             if (issues.length) emit({ type: 'accessibility_check', actor: 'Jev', version: base.version, message: `Accessibility check: ${issues.filter(i => i.status === 'flag').length} concern(s).` });
             return issues;
           })
-          .catch(() => { signal.throwIfAborted(); return [] as Issue[]; })
+          .catch(error => { signal.throwIfAborted(); throw error; })
       : Promise.resolve([] as Issue[]);
     // One speculative node only. Capture rejection immediately so it cannot become unhandled.
     const speculativeAbort = new AbortController();

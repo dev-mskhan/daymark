@@ -18,12 +18,12 @@ const REPAIR_SYSTEM_PROMPT = 'Repair the committed day-trip draft using only the
 export function applyRepair(current: Activity[], content: unknown): Proposal {
   const repair = repairSchema.parse(content);
   const touched = [...repair.updates.map(update => update.index), ...repair.removeIndices];
-  if (touched.some(index => index >= current.length)) throw new Error('修复引用了不存在的活动位置。');
-  if (new Set(touched).size !== touched.length) throw new Error('同一个活动不能被重复修改或同时删除。');
+  if (touched.some(index => index >= current.length)) throw new Error('The repair referenced an activity position that does not exist.');
+  if (new Set(touched).size !== touched.length) throw new Error('An activity cannot be both modified and removed, or modified more than once.');
   const updates = new Map(repair.updates.map(({ index, ...activity }) => [index, activity]));
   const removed = new Set(repair.removeIndices);
   const activities = current.flatMap((activity, index) => removed.has(index) ? [] : [{ ...activity, ...updates.get(index), id: activity.id }]);
-  if (!activities.length) throw new Error('修复不能移除全部活动。');
+  if (!activities.length) throw new Error('A repair cannot remove every activity.');
   return { activities, done: repair.done };
 }
 
@@ -38,10 +38,10 @@ export class PlannerProvider {
     const content = await this.callModel(request, candidates, current, [], signal, validationFeedback, context, { decisions, allowJevQuery });
     const parsed = plannerActionSchema.parse(content.content);
     if (parsed.action === 'ask_jev') {
-      if (!allowJevQuery) throw new Error('Jev 查询后必须提交活动或结束。');
+      if (!allowJevQuery) throw new Error('After a Jev query, the LLM must submit an activity or finish.');
       return { ...parsed, model: content.model };
     }
-    if (!parsed.activity && !parsed.done) throw new Error('LLM 未提交活动且未结束。');
+    if (!parsed.activity && !parsed.done) throw new Error('The LLM must submit an activity or finish.');
     const nextId = Math.max(0, ...current.map(a => Number(a.id.replace('activity-', '')) || 0)) + 1;
     const activities = parsed.activity ? [...current, { ...parsed.activity, id: `activity-${nextId}` }] : current;
     return { action: 'proposal', proposal: { activities, done: parsed.done || activities.length >= 6, model: content.model } };
@@ -65,7 +65,7 @@ export class PlannerProvider {
     const model = result.model;
     if (issues.length) return { ...applyRepair(current, content), model };
     const next = nextSchema.parse(content);
-    if (!next.activity && !next.done) throw new Error('LLM 未提交活动且未结束。');
+    if (!next.activity && !next.done) throw new Error('The LLM must submit an activity or finish.');
     const nextId = Math.max(0, ...current.map(a => Number(a.id.replace('activity-', '')) || 0)) + 1;
     const activities = next.activity ? [...current, { ...next.activity, id: `activity-${nextId}` }] : current;
     return { activities, done: next.done || activities.length >= 6, model };
@@ -80,7 +80,7 @@ export class PlannerProvider {
         { role: 'user', content: JSON.stringify({ mode: issues.length ? 'repair' : 'next', request, candidates: issues.length ? candidates : candidates.filter(p => !current.some(a => a.placeId === p.id)), current: current.map((activity, index) => ({ ...activity, index })), currentPlaces: current.map(a => candidates.find(p => p.id === a.placeId)), feedback: issues, previousValidationError: validationFeedback, controllerContext: context, sourceVersion: context?.version, jevDecisions: queryRound?.decisions ?? [], allowJevQuery: queryRound?.allowJevQuery ?? false }) },
       ] }),
     });
-    if (!response.ok) throw new Error(`LLM 请求失败 (${response.status})`);
+    if (!response.ok) throw new Error(`The LLM request failed (${response.status})`);
     const payload = await response.json();
     const content = JSON.parse(payload.choices?.[0]?.message?.content ?? '{}');
     const model = typeof payload.model === 'string' ? payload.model : process.env.GROQ_MODEL;

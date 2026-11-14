@@ -78,6 +78,8 @@
 
 **Deliverable:** Jev flags opening hours conflicts and accessibility issues ✅
 
+**Verification update (2026-11-14):** JevStation response envelopes are supported; provider failures and missing per-place details now remain explicit `unknown` checks. All 28 tests in `lib/providers/jev-validation.test.ts` passed, and a live authenticated JevStation probe returned a valid answer. This probe does not verify a complete live itinerary.
+
 ---
 
 ## Priority 4: Multi-Day Trip Support (Week 7-9)
@@ -108,13 +110,13 @@
 | 4.13 | Create `day_boundary` database table schema            | � Complete |          | SQL in `lib/db/schema-multiday.ts`, wired in P6      |
 | 4.14 | Create `day_segment` database table schema             | � Complete |          | SQL + TypeScript column types defined                |
 | 4.15 | Write Drizzle migration for new tables                 | � Complete |          | SQL migration in schema-multiday.ts comments         |
-| 4.16 | Add RLS policies for day_boundary table                | � Review   |          | SQL defined; applied when Supabase provisioned in P6 |
-| 4.17 | Add RLS policies for day_segment table                 | � Review   |          | SQL defined; applied when Supabase provisioned in P6 |
-| 4.18 | Update trip API to accept multi-day structure          | � Review   |          | Deferred to P6 (API infrastructure)                  |
+| 4.16 | Add RLS policies for day_boundary table                | 🟢 Complete |          | `day_boundary_via_trip`; verified in PGlite (P6) |
+| 4.17 | Add RLS policies for day_segment table                 | 🟢 Complete |          | `day_segment_via_revision`; verified in PGlite (P6) |
+| 4.18 | Update trip API to accept multi-day structure          | 🟢 Complete |          | `POST/PATCH /api/trips` take up to 7 `days` |
 | 4.19 | Update trip persistence to save day boundaries         | � Complete |          | `dayBoundaryToRow()` helper                          |
 | 4.20 | Update trip persistence to save day segments           | � Complete |          | `daySegmentToRow()` helper                           |
 | 4.21 | Update trip loading to reconstruct multi-day structure | � Complete |          | `rowToDaySegment()` helper                           |
-| 4.22 | Update trip duplication for multi-day                  | � Review   |          | Deferred to P6 (trip lifecycle APIs)                 |
+| 4.22 | Update trip duplication for multi-day                  | 🟢 Complete |          | Copies day boundaries incl. overnight places         |
 
 ### Week 9: UI Components & Testing
 
@@ -124,7 +126,7 @@
 | 4.24 | Add multiple DayDial components (one per day)  | � Complete |          | One DayDial per accordion panel                 |
 | 4.25 | Add day boundary indicators with date labels   | � Complete |          | Day header with stop count                      |
 | 4.26 | Add overnight location markers in timeline     | � Complete |          | Moon icon + overnight marker card               |
-| 4.27 | Update form to collect multiple day boundaries | � Review   |          | State added; full form UI deferred to P8        |
+| 4.27 | Update form to collect multiple day boundaries | 🔵 Review   |          | `/trips` form collects start date + 1–7 days; per-day times and overnight places still default |
 | 4.28 | Add day-switching navigation in workspace      | � Complete |          | Accordion tabs + `activeDay` state              |
 | 4.29 | Update map to color-code activities by day     | � Review   |          | Deferred to P8 (map enhancements)               |
 | 4.30 | Add overnight markers to map display           | � Review   |          | Deferred to P8 (map enhancements)               |
@@ -144,24 +146,24 @@
 
 | #    | Task                                                       | Status         | Assignee | Notes                                    |
 | ---- | ---------------------------------------------------------- | -------------- | -------- | ---------------------------------------- |
-| 5.1  | Define light theme color palette in CSS                    | 🔴 Not Started |          | --color-bg: #FAFAFA, etc.                |
-| 5.2  | Convert all hardcoded colors to CSS variables              | 🔴 Not Started |          | --color-bg, --color-text, --color-accent |
-| 5.3  | Implement `[data-theme="light"]` selector overrides        | 🔴 Not Started |          |                                          |
-| 5.4  | Implement `[data-theme="dark"]` selector (existing colors) | 🔴 Not Started |          |                                          |
-| 5.5  | Create theme switching logic with localStorage             | 🔴 Not Started |          | Persist preference                       |
-| 5.6  | Add theme toggle button in navigation                      | 🔴 Not Started |          | Sun/moon icon                            |
-| 5.7  | Respect `prefers-color-scheme` media query                 | 🔴 Not Started |          | System preference                        |
-| 5.8  | Add smooth transition on theme switch                      | 🔴 Not Started |          | transition: background-color 0.3s        |
-| 5.9  | Update all components to use CSS variables                 | 🔴 Not Started |          | ActivityCard, buttons, forms, etc.       |
-| 5.10 | Test hover states in both themes                           | 🔴 Not Started |          |                                          |
-| 5.11 | Test active states in both themes                          | 🔴 Not Started |          |                                          |
-| 5.12 | Test disabled states in both themes                        | 🔴 Not Started |          |                                          |
-| 5.13 | Test map overlays in both themes                           | 🔴 Not Started |          |                                          |
-| 5.14 | Update Phosphor icon weights/colors for light theme        | 🔴 Not Started |          |                                          |
-| 5.15 | Test timeline visualization in both themes                 | 🔴 Not Started |          |                                          |
-| 5.16 | Ensure WCAG AA contrast ratios in both themes              | 🔴 Not Started |          | 4.5:1 text, 3:1 UI                       |
-| 5.17 | Test with color blindness simulators                       | 🔴 Not Started |          | Protanopia, Deuteranopia, Tritanopia     |
-| 5.18 | Add theme preference to user profile (if authenticated)    | 🔴 Not Started |          | Optional                                 |
+| 5.1  | Define light theme color palette in CSS                    | 🟢 Complete |          | Light and dark semantic palettes in globals.css |
+| 5.2  | Convert all hardcoded colors to CSS variables              | 🟢 Complete |          | Component colors now use semantic tokens |
+| 5.3  | Implement `[data-theme="light"]` selector overrides        | 🟢 Complete |          |                                          |
+| 5.4  | Implement `[data-theme="dark"]` selector (existing colors) | 🟢 Complete |          |                                          |
+| 5.5  | Create theme switching logic with localStorage             | 🟢 Complete |          | Preference persists; storage errors announced |
+| 5.6  | Add theme toggle button in navigation                      | 🟢 Complete |          | Sun/moon icon                            |
+| 5.7  | Respect `prefers-color-scheme` media query                 | 🟢 Complete |          | System preference unless user overrides |
+| 5.8  | Add smooth transition on theme switch                      | 🟢 Complete |          | Reduced-motion preference respected      |
+| 5.9  | Update all components to use CSS variables                 | 🟢 Complete |          | Forms, buttons, timeline, badges, map overlays |
+| 5.10 | Test hover states in both themes                           | 🟢 Complete |          | Verified in browser (icon-button inversion) |
+| 5.11 | Test active states in both themes                          | 🔵 Review  |          | `:active` styles are transform-only (theme-independent); could not trigger `:active` in the hidden test tab |
+| 5.12 | Test disabled states in both themes                        | 🟢 Complete |          | Disabled fields keep muted text/border tokens in both themes |
+| 5.13 | Test map overlays in both themes                           | 🔵 Review  |          | Fixture plot verified; live light and dark map requests with markers returned images; visual overlay check remains |
+| 5.14 | Update Phosphor icon weights/colors for light theme        | 🟢 Complete |          | Icons inherit `currentColor` from theme tokens |
+| 5.15 | Test timeline visualization in both themes                 | 🟢 Complete |          | Screenshots checked: timeline, badges, notices |
+| 5.16 | Ensure WCAG AA contrast ratios in both themes              | 🟢 Complete |          | Text/badge pairs 5.7:1–14.1:1; accent markers rely on 1.5px ink border (≈11:1) + dark numeral |
+| 5.17 | Test with color blindness simulators                       | 🟢 Complete |          | Machado simulation on theme tokens passes in both themes; info badge darkened; status never color-only |
+| 5.18 | Add theme preference to user profile (if authenticated)    | 🔵 Review  |          | API tested with stubbed auth; live account sync and error handling need verification |
 
 **Deliverable:** Complete light and dark theme support
 
@@ -175,63 +177,63 @@
 
 | #    | Task                                        | Status         | Assignee | Notes                          |
 | ---- | ------------------------------------------- | -------------- | -------- | ------------------------------ |
-| 6.1  | Install and configure @supabase/ssr         | 🔴 Not Started |          |                                |
-| 6.2  | Install and configure @supabase/supabase-js | 🔴 Not Started |          |                                |
-| 6.3  | Install and configure drizzle-orm           | 🔴 Not Started |          |                                |
-| 6.4  | Install Postgres driver for Drizzle         | 🔴 Not Started |          |                                |
-| 6.5  | Create Supabase browser client              | 🔴 Not Started |          |                                |
-| 6.6  | Create Supabase server client               | 🔴 Not Started |          | SSR-safe                       |
-| 6.7  | Define Drizzle schema for user_profile      | 🔴 Not Started |          | Keyed by Supabase Auth user ID |
-| 6.8  | Define Drizzle schema for trip              | 🔴 Not Started |          | Owner, status, metadata        |
-| 6.9  | Define Drizzle schema for day_boundary      | 🔴 Not Started |          | Multi-day support              |
-| 6.10 | Define Drizzle schema for day_segment       | 🔴 Not Started |          | Multi-day support              |
-| 6.11 | Define Drizzle schema for planning_run      | 🔴 Not Started |          | Immutable events               |
-| 6.12 | Define Drizzle schema for trip_revision     | 🔴 Not Started |          | Accepted versions              |
-| 6.13 | Write Drizzle migrations for all tables     | 🔴 Not Started |          |                                |
-| 6.14 | Test migrations on local Supabase instance  | 🔴 Not Started |          |                                |
+| 6.1  | Install and configure @supabase/ssr         | 🟢 Complete |          | v0.12; cookie-based SSR sessions + middleware refresh |
+| 6.2  | Install and configure @supabase/supabase-js | 🟢 Complete |          |                                |
+| 6.3  | Install and configure drizzle-orm           | 🟢 Complete |          | + drizzle-kit; `npm run db:generate` / `db:migrate` |
+| 6.4  | Install Postgres driver for Drizzle         | 🟢 Complete |          | `postgres` with `prepare: false` for the pooler |
+| 6.5  | Create Supabase browser client              | 🟢 Complete |          | `lib/supabase/client.ts`       |
+| 6.6  | Create Supabase server client               | 🟢 Complete |          | `lib/supabase/server.ts` (SSR-safe cookies) |
+| 6.7  | Define Drizzle schema for user_profile      | 🟢 Complete |          | Keyed by Supabase Auth user ID; stores `theme_preference` |
+| 6.8  | Define Drizzle schema for trip              | 🟢 Complete |          | Owner, status, metadata        |
+| 6.9  | Define Drizzle schema for day_boundary      | 🟢 Complete |          | Multi-day support              |
+| 6.10 | Define Drizzle schema for day_segment       | 🟢 Complete |          | Multi-day support              |
+| 6.11 | Define Drizzle schema for planning_run      | 🟢 Complete |          | Immutable: owner select/insert only |
+| 6.12 | Define Drizzle schema for trip_revision     | 🟢 Complete |          | Accepted versions              |
+| 6.13 | Write Drizzle migrations for all tables     | 🟢 Complete |          | `drizzle/0000_initial_schema.sql` incl. RLS policies |
+| 6.14 | Test migrations on local Supabase instance  | 🔵 Review  |          | PGlite tested; remote session pooler connects but direct migration hostname does not resolve; real Supabase migration not applied |
 
 ### Week 12: Authentication & RLS
 
 | #    | Task                                               | Status         | Assignee | Notes                             |
 | ---- | -------------------------------------------------- | -------------- | -------- | --------------------------------- |
-| 6.15 | Configure Google OAuth in Supabase dashboard       | 🔴 Not Started |          | Get client ID/secret              |
-| 6.16 | Add GOOGLE_CLIENT_ID to env                        | 🔴 Not Started |          |                                   |
-| 6.17 | Add GOOGLE_CLIENT_SECRET to env                    | 🔴 Not Started |          |                                   |
-| 6.18 | Implement sign-up UI (email/password)              | 🔴 Not Started |          |                                   |
-| 6.19 | Implement sign-in UI (email/password)              | 🔴 Not Started |          |                                   |
-| 6.20 | Implement Google OAuth button                      | 🔴 Not Started |          |                                   |
-| 6.21 | Implement OAuth callback route                     | 🔴 Not Started |          | /auth/callback                    |
-| 6.22 | Implement sign-out functionality                   | 🔴 Not Started |          |                                   |
-| 6.23 | Add expired session handling                       | 🔴 Not Started |          | Redirect to sign-in               |
-| 6.24 | Add unauthorized state handling                    | 🔴 Not Started |          | 401/403 errors                    |
-| 6.25 | Implement secure SSR cookie handling               | 🔴 Not Started |          |                                   |
-| 6.26 | Add RLS policy for user_profile (own record only)  | 🔴 Not Started |          | auth.uid() = user_id              |
-| 6.27 | Add RLS policy for trip (owner CRUD)               | 🔴 Not Started |          | auth.uid() = owner_id             |
-| 6.28 | Add RLS policy for day_boundary (via trip)         | 🔴 Not Started |          |                                   |
-| 6.29 | Add RLS policy for day_segment (via trip_revision) | 🔴 Not Started |          |                                   |
-| 6.30 | Add RLS policy for planning_run (owner read)       | 🔴 Not Started |          |                                   |
-| 6.31 | Add RLS policy for trip_revision (owner CRUD)      | 🔴 Not Started |          |                                   |
-| 6.32 | Add server-side ownership checks as defense        | 🔴 Not Started |          | Don't trust request body user IDs |
+| 6.15 | Configure Google OAuth in Supabase dashboard       | ⚪ Blocked |          | Live Supabase settings show Google provider disabled; enable and configure it in the dashboard |
+| 6.16 | Add GOOGLE_CLIENT_ID to env                        | 🟢 Complete |          | Set in local `.env`; Google credentials must also be configured in Supabase, not read by the app |
+| 6.17 | Add GOOGLE_CLIENT_SECRET to env                    | 🟢 Complete |          | Set in local `.env`; the secret is not read by the app |
+| 6.18 | Implement sign-up UI (email/password)              | 🔵 Review  |          | `/sign-up`; built and rendered, not exercised against a live Supabase project |
+| 6.19 | Implement sign-in UI (email/password)              | 🔵 Review  |          | `/sign-in`; same caveat |
+| 6.20 | Implement Google OAuth button                      | 🔵 Review  |          | Calls `signInWithOAuth`; needs 6.15 |
+| 6.21 | Implement OAuth callback route                     | 🟢 Complete |          | `/auth/callback`; open-redirect safe; tested |
+| 6.22 | Implement sign-out functionality                   | 🟢 Complete |          | POST `/auth/signout`; same-origin only; tested |
+| 6.23 | Add expired session handling                       | 🟢 Complete |          | Middleware redirect + `apiFetch` 401 → sign-in; smoke-tested |
+| 6.24 | Add unauthorized state handling                    | 🟢 Complete |          | 401/403 mapped to clear messages |
+| 6.25 | Implement secure SSR cookie handling               | 🔵 Review  |          | Standard `@supabase/ssr` pattern with `getUser()`; needs a real session to confirm |
+| 6.26 | Add RLS policy for user_profile (own record only)  | 🟢 Complete |          | Verified in PGlite |
+| 6.27 | Add RLS policy for trip (owner CRUD)               | 🟢 Complete |          | Verified in PGlite |
+| 6.28 | Add RLS policy for day_boundary (via trip)         | 🟢 Complete |          | Verified in PGlite |
+| 6.29 | Add RLS policy for day_segment (via trip_revision) | 🟢 Complete |          | Verified in PGlite |
+| 6.30 | Add RLS policy for planning_run (owner read)       | 🟢 Complete |          | Owner select/insert; no update/delete |
+| 6.31 | Add RLS policy for trip_revision (owner CRUD)      | 🟢 Complete |          | Verified in PGlite |
+| 6.32 | Add server-side ownership checks as defense        | 🟢 Complete |          | Every repository call filters by session user id; body ids rejected |
 
 ### Week 13: Trip Lifecycle APIs
 
 | #    | Task                                                 | Status         | Assignee | Notes                                |
 | ---- | ---------------------------------------------------- | -------------- | -------- | ------------------------------------ |
-| 6.33 | Implement POST /api/trips (create draft)             | 🔴 Not Started |          | Multi-day support                    |
-| 6.34 | Implement GET /api/trips (list owned trips)          | 🔴 Not Started |          |                                      |
-| 6.35 | Implement GET /api/trips/:id (retrieve trip)         | 🔴 Not Started |          | With all day boundaries and segments |
-| 6.36 | Implement PATCH /api/trips/:id (edit draft)          | 🔴 Not Started |          | Day boundaries, inputs               |
-| 6.37 | Implement POST /api/trips/:id/plan (start planning)  | 🔴 Not Started |          | Stream events for all days           |
-| 6.38 | Implement POST /api/trips/:id/accept (save revision) | 🔴 Not Started |          | Multi-day itinerary                  |
-| 6.39 | Implement POST /api/trips/:id/duplicate (copy trip)  | 🔴 Not Started |          | Multi-day structure                  |
-| 6.40 | Implement POST /api/trips/:id/archive (archive trip) | 🔴 Not Started |          |                                      |
-| 6.41 | Implement DELETE /api/trips/:id (delete trip)        | 🔴 Not Started |          | With confirmation                    |
-| 6.42 | Implement GET /api/trips/:id/export (print output)   | 🔴 Not Started |          | All days, verification status        |
-| 6.43 | Add auth middleware to all trip APIs                 | 🔴 Not Started |          | Require valid session                |
-| 6.44 | Add request validation with Zod schemas              | 🔴 Not Started |          |                                      |
-| 6.45 | Add error handling and user-friendly messages        | 🔴 Not Started |          |                                      |
-| 6.46 | Test all APIs with authenticated requests            | 🔴 Not Started |          |                                      |
-| 6.47 | Test RLS enforcement (attempt unauthorized access)   | 🔴 Not Started |          |                                      |
+| 6.33 | Implement POST /api/trips (create draft)             | 🟢 Complete |          | Multi-day support                    |
+| 6.34 | Implement GET /api/trips (list owned trips)          | 🟢 Complete |          | `?archived=true` includes archived   |
+| 6.35 | Implement GET /api/trips/:id (retrieve trip)         | 🟢 Complete |          | With day boundaries and latest revision segments |
+| 6.36 | Implement PATCH /api/trips/:id (edit draft)          | 🟢 Complete |          | Day boundaries, inputs; archived → 409 |
+| 6.37 | Implement POST /api/trips/:id/plan (start planning)  | 🟢 Complete |          | NDJSON stream for all days; run persisted |
+| 6.38 | Implement POST /api/trips/:id/accept (save revision) | 🟢 Complete |          | Multi-day itinerary                  |
+| 6.39 | Implement POST /api/trips/:id/duplicate (copy trip)  | 🟢 Complete |          | Inputs + day structure as new draft  |
+| 6.40 | Implement POST /api/trips/:id/archive (archive trip) | 🟢 Complete |          |                                      |
+| 6.41 | Implement DELETE /api/trips/:id (delete trip)        | 🟢 Complete |          | Requires `?confirm=true`             |
+| 6.42 | Implement GET /api/trips/:id/export (print output)   | 🟢 Complete |          | JSON or `?format=markdown`; per-stop verification |
+| 6.43 | Add auth middleware to all trip APIs                 | 🟢 Complete |          | `authed()` wrapper + session-refresh middleware |
+| 6.44 | Add request validation with Zod schemas              | 🟢 Complete |          | Strict schemas; unknown fields (e.g. `ownerId`) rejected |
+| 6.45 | Add error handling and user-friendly messages        | 🟢 Complete |          | Consistent `{ error, code }` JSON    |
+| 6.46 | Test all APIs with authenticated requests            | 🔵 Review  |          | 11 route tests against PGlite with auth stubbed; live Supabase session still needed |
+| 6.47 | Test RLS enforcement (attempt unauthorized access)   | 🟢 Complete |          | 10 RLS tests + negative control (PGlite) |
 
 **Deliverable:** Authenticated users can save and manage multi-day trips
 
@@ -251,7 +253,7 @@
 | 7.4  | Add integration test: Opening hours validation               | 🔴 Not Started |          |                                   |
 | 7.5  | Add integration test: Timezone consistency                   | 🔴 Not Started |          |                                   |
 | 7.6  | Add integration test: Supabase session handling              | 🔴 Not Started |          |                                   |
-| 7.7  | Add integration test: RLS ownership isolation                | 🔴 Not Started |          | User A cannot access User B trips |
+| 7.7  | Add integration test: RLS ownership isolation                | 🟢 Complete |          | `lib/db/rls.test.ts` + API isolation tests (PGlite) |
 | 7.8  | Test with real Geoapify data (NYC)                           | 🔴 Not Started |          |                                   |
 | 7.9  | Test with real Geoapify data (Los Angeles)                   | 🔴 Not Started |          |                                   |
 | 7.10 | Test with real Geoapify data (Chicago)                       | 🔴 Not Started |          |                                   |
@@ -409,46 +411,46 @@
 | 9.1 | Define GeocodingProvider interface           | 🔴 Not Started |          | geocode() method              |
 | 9.2 | Define PlaceDetailsProvider interface        | 🔴 Not Started |          | enrichPlaceDetails() method   |
 | 9.3 | Define ProviderMetadata type                 | 🔴 Not Started |          | Source, freshness, confidence |
-| 9.4 | Define ProviderError normalized error type   | 🔴 Not Started |          |                               |
+| 9.4 | Define ProviderError normalized error type   | 🟢 Complete |          | `ProviderError` in `lib/providers/geoapify.ts` |
 | 9.5 | Update PlacesProvider to extend contracts    | 🔴 Not Started |          |                               |
 | 9.6 | Update RoutesProvider to extend contracts    | 🔴 Not Started |          |                               |
 | 9.7 | Update planner dependencies to use contracts | 🔴 Not Started |          |                               |
-| 9.8 | Keep fixture providers deterministic         | 🔴 Not Started |          | No randomness                 |
-| 9.9 | Isolate legacy Amap implementation           | 🔴 Not Started |          | Move to legacy folder         |
+| 9.8 | Keep fixture providers deterministic         | 🔴 Not Started |          | `fixtureEnrich` still stamps `new Date()` |
+| 9.9 | Isolate legacy Amap implementation           | 🟢 Complete |          | Removed entirely (provider, map, proxy, rewrite) |
 
 ### Geoapify Adapters
 
 | #     | Task                                             | Status         | Assignee | Notes                   |
 | ----- | ------------------------------------------------ | -------------- | -------- | ----------------------- |
-| 10.1  | Implement Geoapify Places API adapter            | 🔴 Not Started |          | Search endpoint         |
-| 10.2  | Implement Geoapify Geocoding API adapter         | 🔴 Not Started |          | Address → coordinates   |
-| 10.3  | Implement Geoapify Place Details API adapter     | 🔴 Not Started |          | Opening hours, timezone |
-| 10.4  | Implement Geoapify Routing API adapter (walking) | 🔴 Not Started |          |                         |
-| 10.5  | Implement Geoapify Routing API adapter (transit) | 🔴 Not Started |          | If available            |
-| 10.6  | Add timeout handling (10s default)               | 🔴 Not Started |          |                         |
-| 10.7  | Add abort signal support                         | 🔴 Not Started |          | Cancellable requests    |
-| 10.8  | Add quota/rate limit handling                    | 🔴 Not Started |          | Retry with backoff      |
-| 10.9  | Add malformed response handling                  | 🔴 Not Started |          | Graceful degradation    |
-| 10.10 | Normalize responses to Place domain type         | 🔴 Not Started |          |                         |
-| 10.11 | Normalize responses to TransportOption type      | 🔴 Not Started |          |                         |
+| 10.1  | Implement Geoapify Places API adapter            | 🟢 Complete |          | `PlacesProvider.discover()`; mocked tests, live unverified |
+| 10.2  | Implement Geoapify Geocoding API adapter         | 🟢 Complete |          | `PlacesProvider.geocode()`  |
+| 10.3  | Implement Geoapify Place Details API adapter     | 🟢 Complete |          | Now receives `geoapify:` ids from discovery |
+| 10.4  | Implement Geoapify Routing API adapter (walking) | 🟢 Complete |          | `mode=walk` |
+| 10.5  | Implement Geoapify Routing API adapter (transit) | 🔵 Review  |          | `mode=transit` parsed defensively; unverified against live API |
+| 10.6  | Add timeout handling (10s default)               | 🟢 Complete |          | `geoapifyJson` (geocode keeps its own 15s) |
+| 10.7  | Add abort signal support                         | 🟢 Complete |          | Caller aborts propagate unwrapped |
+| 10.8  | Add quota/rate limit handling                    | 🟢 Complete |          | 429/503 retry with backoff, honors Retry-After |
+| 10.9  | Add malformed response handling                  | 🟢 Complete |          | Malformed JSON/shape → `ProviderError`; failed lenses skipped |
+| 10.10 | Normalize responses to Place domain type         | 🟢 Complete |          |                         |
+| 10.11 | Normalize responses to TransportOption type      | 🟢 Complete |          |                         |
 | 10.12 | Add provider metadata to responses               | 🔴 Not Started |          | Source, timestamp       |
-| 10.13 | Never expose GEOAPIFY_API_KEY to browser         | 🔴 Not Started |          | Server-only             |
-| 10.14 | Add tests for Geoapify adapters                  | 🔴 Not Started |          | Mock responses          |
+| 10.13 | Never expose GEOAPIFY_API_KEY to browser         | 🟢 Complete |          | Server-only; maps proxied via `/api/static-map` |
+| 10.14 | Add tests for Geoapify adapters                  | 🟢 Complete |          | Client, places, routes, static-map proxy tests |
 
 ### Groq LLM Integration
 
 | #     | Task                                             | Status         | Assignee | Notes                                   |
 | ----- | ------------------------------------------------ | -------------- | -------- | --------------------------------------- |
-| 11.1  | Add GROQ_API_KEY to .env                         | 🔴 Not Started |          | Server-only                             |
-| 11.2  | Add GROQ_MODEL to .env                           | 🔴 Not Started |          | e.g., llama-3.3-70b-versatile           |
-| 11.3  | Add GROQ_BASE_URL to .env (optional)             | 🔴 Not Started |          | Default: https://api.groq.com/openai/v1 |
-| 11.4  | Update planner to use Groq configuration         | 🔴 Not Started |          | Replace generic LLM config              |
-| 11.5  | Verify OpenAI-compatible /chat/completions shape | 🔴 Not Started |          | Should work as-is                       |
-| 11.6  | Update model call error messages for Groq        | 🔴 Not Started |          |                                         |
-| 11.7  | Update service probe checks for Groq             | 🔴 Not Started |          | scripts/check-services.mjs              |
-| 11.8  | Add tests for Groq integration                   | 🔴 Not Started |          | Mock responses                          |
-| 11.9  | Test with real Groq API key (dev environment)    | 🔴 Not Started |          |                                         |
-| 11.10 | Never commit GROQ_API_KEY to git                 | 🔴 Not Started |          | Add to .gitignore check                 |
+| 11.1  | Add GROQ_API_KEY to .env                         | 🟢 Complete |          | Documented in `.env.example`, server-only |
+| 11.2  | Add GROQ_MODEL to .env                           | 🟢 Complete |          | e.g., llama-3.3-70b-versatile           |
+| 11.3  | Add GROQ_BASE_URL to .env (optional)             | 🟢 Complete |          | Default: https://api.groq.com/openai/v1 |
+| 11.4  | Update planner to use Groq configuration         | 🟢 Complete |          | `lib/providers/planner.ts`              |
+| 11.5  | Verify OpenAI-compatible /chat/completions shape | 🟢 Complete |          | Request/response shape matches          |
+| 11.6  | Update model call error messages for Groq        | 🟢 Complete |          | English messages                        |
+| 11.7  | Update service probe checks for Groq             | 🟢 Complete |          | `scripts/check-services.mjs` also probes Geoapify and the configured Jev URL |
+| 11.8  | Add tests for Groq integration                   | 🟢 Complete |          | `lib/providers/planner.test.ts` (mocked) |
+| 11.9  | Test with real Groq API key (dev environment)    | 🔴 Not Started |          | Needs key in `.env.local`               |
+| 11.10 | Never commit GROQ_API_KEY to git                 | 🟢 Complete |          | `.env` and `.env.local` are gitignored  |
 
 ### USA-First UI Updates
 
@@ -456,20 +458,20 @@
 | ----- | ------------------------------------------- | -------------- | -------- | ------------------------------------------- |
 | 12.1  | Update landing page copy                    | 🔴 Not Started |          | "Multi-day trips, verified stop by stop"    |
 | 12.2  | Update mode switch descriptions             | 🔴 Not Started |          | Mention verification features               |
-| 12.3  | Update live mode label                      | 🔴 Not Started |          | "Live models and Geoapify data"             |
-| 12.4  | Replace "Mainland China only" notice        | 🔴 Not Started |          | "USA destinations"                          |
-| 12.5  | Update coverage notice copy for Geoapify    | 🔴 Not Started |          |                                             |
-| 12.6  | Translate Chinese error messages to English | 🔴 Not Started |          | In providers/routes.ts, providers/places.ts |
-| 12.7  | Update timeline labels for origin/return    | 🔴 Not Started |          |                                             |
-| 12.8  | Update map labels from Amap to Geoapify     | 🔴 Not Started |          |                                             |
-| 12.9  | Test USA city examples (NYC, LA, Chicago)   | 🔴 Not Started |          |                                             |
-| 12.10 | Update README with USA focus                | 🔴 Not Started |          |                                             |
+| 12.3  | Update live mode label                      | 🟢 Complete |          | "Live models and Geoapify data"             |
+| 12.4  | Replace "Mainland China only" notice        | 🟢 Complete |          | "US destinations"                           |
+| 12.5  | Update coverage notice copy for Geoapify    | 🟢 Complete |          |                                             |
+| 12.6  | Translate Chinese error messages to English | 🟢 Complete |          | Providers, planner and plan API route; review prompts in `jev.ts`/`planner.ts` remain |
+| 12.7  | Update timeline labels for origin/return    | 🟢 Complete |          | Delivered with 1.8/1.9                      |
+| 12.8  | Update map labels from Amap to Geoapify     | 🟢 Complete |          | Amap map replaced by Geoapify static map    |
+| 12.9  | Test USA city examples (NYC, LA, Chicago)   | 🔴 Not Started |          | Needs live Geoapify key                     |
+| 12.10 | Update README with USA focus                | 🟢 Complete |          |                                             |
 
 ---
 
 ## Task Summary
 
-**Total Tasks:** 333
+**Total Tasks:** 306
 
 ### By Priority:
 
@@ -481,42 +483,37 @@
 - Priority 6 (Auth & Persistence): 47 tasks
 - Priority 7 (Testing & Polish): 40 tasks
 - Priority 8 (UX Improvements): 82 tasks
-- Additional (Providers & Groq): 70 tasks
+- Additional (Providers & Groq): 43 tasks
 
 ### By Status:
 
-- 🔴 Not Started: 253
+- 🔴 Not Started: 133
 - 🟡 In Progress: 0
-- 🟢 Complete: 71 (P1: 12, P2: 14, P3: 15, P4: 25 of 35)
-- ⚪ Blocked: 0
-- 🔵 Review: 9 (P4: 4.16, 4.17, 4.18, 4.22, 4.27, 4.29, 4.30 — pending P6/P8)
-- ⚪ Blocked: 0
-- 🔵 Review: 0
+- 🟢 Complete: 159 (P1: 12, P2: 14, P3: 15, P4: 32, P5: 15, P6: 40, P7: 1, Additional: 30)
+- 🔵 Review: 13 (4.27, 4.29, 4.30; 5.11, 5.13, 5.18; 6.14, 6.18, 6.19, 6.20, 6.25, 6.46; 10.5)
+- ⚪ Blocked: 1 (6.15 — Google OAuth must be enabled and configured in the Supabase dashboard)
 
 ---
 
 ## Progress Tracking
 
-**Week 1:** 12 / 12 tasks (Priority 1) ✅  
-**Week 2:** 12 / 12 tasks (Priority 1) ✅  
-**Week 3:** 14 / 14 tasks (Priority 2) ✅  
-**Week 4:** 14 / 14 tasks (Priority 2) ✅  
-**Week 5:** 15 / 15 tasks (Priority 3) ✅  
-**Week 6:** 15 / 15 tasks (Priority 3) ✅  
+**Week 1–2:** 12 / 12 tasks (Priority 1) ✅  
+**Week 3–4:** 14 / 14 tasks (Priority 2) ✅  
+**Week 5–6:** 15 / 15 tasks (Priority 3) ✅  
 **Week 7:** 12 / 12 tasks (Priority 4 - Week 7) ✅  
-**Week 8:** 7 / 10 tasks (Priority 4 - Week 8) 🟡 (4.16/4.17/4.18/4.22 → P6)  
-**Week 9:** 9 / 13 tasks (Priority 4 - Week 9) 🟡 (4.27/4.29/4.30 → P8)  
-**Week 10:** **\_** / 18 tasks (Priority 5)  
-**Week 11:** **\_** / 14 tasks (Priority 6 - Week 11)  
-**Week 12:** **\_** / 18 tasks (Priority 6 - Week 12)  
-**Week 13:** **\_** / 15 tasks (Priority 6 - Week 13)  
+**Week 8:** 10 / 10 tasks (Priority 4 - Week 8) ✅  
+**Week 9:** 10 / 13 tasks (Priority 4 - Week 9) 🟡 (4.27 partial; 4.29/4.30 → P8 map work)  
+**Week 10:** 15 / 18 tasks (Priority 5) 🟡 (5.11, 5.13 and 5.18 in review)  
+**Week 11:** 13 / 14 tasks (Priority 6 - Week 11) 🟡 (6.14 in review)  
+**Week 12:** 13 / 18 tasks (Priority 6 - Week 12) 🟡 (Google OAuth blocked, 4 in review)  
+**Week 13:** 14 / 15 tasks (Priority 6 - Week 13) 🟡 (6.46 in review)  
 **Week 14:** **\_** / 21 tasks (Priority 7 - Week 14)  
 **Week 15:** **\_** / 19 tasks (Priority 7 - Week 15)  
 **Week 16:** **\_** / 24 tasks (Priority 8 - Week 16)  
 **Week 17:** **\_** / 32 tasks (Priority 8 - Week 17)  
 **Week 18:** **\_** / 26 tasks (Priority 8 - Week 18)
 
-**Overall Progress:** 80 / 333 tasks (24%)
+**Overall Progress:** 159 / 306 tasks (52%)
 
 ---
 
@@ -530,4 +527,4 @@
 - Link to PRs/commits in notes when available
 - Update progress tracking weekly
 
-**Last Updated:** 2024-12-13
+**Last Updated:** 2026-11-14

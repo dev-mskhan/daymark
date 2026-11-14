@@ -19,6 +19,15 @@ const answerSchema = z.object({
   const probabilities = raw.probabilities ?? {};
   return { choice, probabilities, confidence };
 });
+const evaluationSchema = z.object({
+  model: z.string(),
+  answers: z.record(z.string(), answerSchema),
+}).passthrough();
+const jevStationResponseSchema = z.object({
+  code: z.number(),
+  message: z.string().optional(),
+  data: evaluationSchema.optional(),
+}).passthrough();
 const ACTIONABLE_CONFIDENCE = 0.5;
 export class JevProvider {
   constructor(private fixture: boolean) {}
@@ -52,7 +61,17 @@ export class JevProvider {
       const body = await response.text().catch(() => '');
       throw new Error(`Jev request failed (${response.status})${body ? ': ' + body.slice(0, 200) : ''}`);
     }
-    const payload = z.object({ model: z.string(), answers: z.record(z.string(), answerSchema) }).parse(await response.json());
+    const rawPayload: unknown = await response.json();
+    const stationResponse = jevStationResponseSchema.safeParse(rawPayload);
+    let payload: z.infer<typeof evaluationSchema>;
+    if (stationResponse.success) {
+      if (stationResponse.data.code !== 0 || !stationResponse.data.data) {
+        throw new Error(`Jev request failed: ${stationResponse.data.message ?? 'provider returned an error.'}`);
+      }
+      payload = stationResponse.data.data;
+    } else {
+      payload = evaluationSchema.parse(rawPayload);
+    }
     if (Object.keys(questions).some(id => !payload.answers[id])) throw new Error('Jev returned incomplete answers.');
     return payload;
   }
@@ -216,28 +235,30 @@ export class JevProvider {
       return place?.formattedOpeningHours;
     });
 
+    const noHoursIssues: Issue[] = schedule
+      .filter(entry => {
+        const place = candidates.find(p => p.id === entry.placeId);
+        return !place?.formattedOpeningHours
+          && place?.operationalStatus !== 'temporarily_closed'
+          && place?.operationalStatus !== 'permanently_closed';
+      })
+      .map(entry => ({
+        checkId: 'opening_hours_fit',
+        status: 'unknown' as const,
+        subjectIds: [entry.activityId],
+        message: `Opening hours for ${candidates.find(p => p.id === entry.placeId)?.name ?? entry.placeId} are not verified.`,
+        condition: 'Visit must fall within confirmed opening hours.',
+        repairHint: 'Verify opening hours before confirming this stop.',
+      }));
+
     if (!activitiesWithHours.length) {
-      // No hours data available — flag as unknown for activities without hours
-      const noHoursIssues: Issue[] = schedule
-        .filter(entry => {
-          const place = candidates.find(p => p.id === entry.placeId);
-          return place && !place.formattedOpeningHours && place.operationalStatus !== 'temporarily_closed' && place.operationalStatus !== 'permanently_closed';
-        })
-        .map(entry => ({
-          checkId: 'opening_hours_fit',
-          status: 'unknown' as const,
-          subjectIds: [entry.activityId],
-          message: `Opening hours for ${candidates.find(p => p.id === entry.placeId)?.name ?? entry.placeId} are not verified.`,
-          condition: 'Visit must fall within confirmed opening hours.',
-          repairHint: 'Verify opening hours before confirming this stop.',
-        }));
       return [...operationalIssues, ...noHoursIssues];
     }
 
     if (this.fixture) {
       // Fixture: deterministic check against structured hours
       const hoursIssues = this.checkHoursDeterministic(activitiesWithHours, candidates);
-      return [...operationalIssues, ...hoursIssues];
+      return [...operationalIssues, ...noHoursIssues, ...hoursIssues];
     }
 
     // Live: ask Jev for semantic opening hours fit
@@ -285,10 +306,22 @@ export class JevProvider {
               : 'Verify opening hours before confirming this stop.',
           };
         });
-      return [...operationalIssues, ...jevIssues];
-    } catch {
+      return [...operationalIssues, ...noHoursIssues, ...jevIssues];
+    } catch (error) {
       signal.throwIfAborted();
-      return operationalIssues;
+      return [
+        ...operationalIssues,
+        ...noHoursIssues,
+        ...activitiesWithHours.map(entry => ({
+          checkId: 'opening_hours_fit',
+          status: 'unknown' as const,
+          subjectIds: [entry.activityId],
+          message: `Opening-hours validation could not be completed for ${candidates.find(p => p.id === entry.placeId)?.name ?? entry.placeId}.`,
+          condition: 'Visit must fall within confirmed opening hours.',
+          evidence: [error instanceof Error ? error.message : 'Jev validation failed.'],
+          repairHint: 'Retry verification before confirming this stop.',
+        })),
+      ];
     }
   }
 
@@ -306,6 +339,19 @@ export class JevProvider {
       const place = candidates.find(p => p.id === a.placeId);
       return place?.accessibilityInfo !== undefined;
     });
+    const activitiesWithoutInfo = activities.filter(a => {
+      const place = candidates.find(p => p.id === a.placeId);
+      return place?.accessibilityInfo === undefined;
+    });
+
+    const noAccessibilityInfoIssues: Issue[] = activitiesWithoutInfo.map(a => ({
+      checkId: 'accessibility_fit',
+      status: 'unknown',
+      subjectIds: [a.id],
+      message: `Accessibility information unavailable for ${candidates.find(p => p.id === a.placeId)?.name ?? a.placeId}.`,
+      condition: 'Place must meet the user\'s accessibility requirements.',
+      repairHint: 'Verify accessibility before confirming this stop.',
+    }));
 
     if (this.fixture) {
       // Fixture: pass all if wheelchair accessible, unknown otherwise
@@ -338,14 +384,7 @@ export class JevProvider {
     }
 
     if (!activitiesWithInfo.length) {
-      return activities.map(a => ({
-        checkId: 'accessibility_fit',
-        status: 'unknown' as const,
-        subjectIds: [a.id],
-        message: `Accessibility information unavailable for ${candidates.find(p => p.id === a.placeId)?.name ?? a.placeId}.`,
-        condition: 'Place must meet the user\'s accessibility requirements.',
-        repairHint: 'Verify accessibility before confirming this stop.',
-      }));
+      return noAccessibilityInfoIssues;
     }
 
     try {
@@ -366,7 +405,7 @@ export class JevProvider {
         },
       ]));
       const result = await this.evaluate({ userConstraints: request.constraints, subjects }, questions, signal);
-      return subjects
+      const jevIssues = subjects
         .filter(s => result.answers[s.activityId]?.choice !== 'pass')
         .map(s => {
           const ans = result.answers[s.activityId];
@@ -382,9 +421,21 @@ export class JevProvider {
             repairHint: 'Replace with a confirmed accessible alternative.',
           };
         });
-    } catch {
+      return [...noAccessibilityInfoIssues, ...jevIssues];
+    } catch (error) {
       signal.throwIfAborted();
-      return [];
+      return [
+        ...noAccessibilityInfoIssues,
+        ...activitiesWithInfo.map(a => ({
+          checkId: 'accessibility_fit',
+          status: 'unknown' as const,
+          subjectIds: [a.id],
+          message: `Accessibility validation could not be completed for ${candidates.find(p => p.id === a.placeId)?.name ?? a.placeId}.`,
+          condition: 'Place must meet the user\'s accessibility requirements.',
+          evidence: [error instanceof Error ? error.message : 'Jev validation failed.'],
+          repairHint: 'Retry verification before confirming this stop.',
+        })),
+      ];
     }
   }
 

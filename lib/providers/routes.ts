@@ -1,4 +1,5 @@
 import type { Place, TransportOption } from '../domain';
+import { geoapifyJson } from './geoapify';
 
 export class RoutesProvider {
   constructor(private fixture = false, private signal?: AbortSignal) {}
@@ -25,44 +26,52 @@ export class RoutesProvider {
 
   private async routeMinutes(origin: Place, destination: Place) {
     const option = await this.walkingOption(origin, destination);
-    if (!option) throw new Error('高德未返回步行时间。');
+    if (!option) throw new Error('Geoapify did not return a walking time.');
     return option.durationMinutes;
   }
 
-  private async walkingOption(origin: Place, destination: Place): Promise<TransportOption | null> {
-    if (!process.env.AMAP_KEY) throw new Error('真实模式需要 AMAP_KEY。');
-    const params = new URLSearchParams({ key: process.env.AMAP_KEY, origin: `${origin.longitude},${origin.latitude}`, destination: `${destination.longitude},${destination.latitude}`, show_fields: 'cost' });
-    const response = await fetch(`https://restapi.amap.com/v5/direction/walking?${params}`, {
-      signal: this.signal ? AbortSignal.any([this.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw new Error(`高德步行路线失败 (${response.status})`);
-    const payload = (await response.json()) as { status?: string; info?: string; route?: { paths?: { distance?: string; cost?: { duration?: string } }[] } };
-    if (payload.status !== '1') throw new Error(`高德步行路线失败：${payload.info ?? 'unknown'}`);
-    const path = payload.route?.paths?.[0];
-    const seconds = Number(path?.cost?.duration);
-    if (!Number.isFinite(seconds) || seconds < 0) return null;
-    const durationMinutes = Math.max(1, Math.round(seconds / 60));
-    return { id: `walk:${origin.id}:${destination.id}`, mode: 'walk', durationMinutes, walkingMinutes: durationMinutes, transfers: 0, distanceMeters: Number(path?.distance) || 0, lines: [] };
+  private route(origin: Place, destination: Place, mode: string) {
+    return geoapifyJson<GeoapifyRoute>(
+      '/v1/routing',
+      { waypoints: `${origin.latitude},${origin.longitude}|${destination.latitude},${destination.longitude}`, mode },
+      { signal: this.signal },
+    );
   }
 
+  private async walkingOption(origin: Place, destination: Place): Promise<TransportOption | null> {
+    const props = (await this.route(origin, destination, 'walk')).features?.[0]?.properties;
+    const seconds = Number(props?.time);
+    if (!Number.isFinite(seconds) || seconds < 0) return null;
+    const durationMinutes = Math.max(1, Math.round(seconds / 60));
+    return { id: `walk:${origin.id}:${destination.id}`, mode: 'walk', durationMinutes, walkingMinutes: durationMinutes, transfers: 0, distanceMeters: Number(props?.distance) || 0, lines: [] };
+  }
+
+  // Transit is best-effort: it is omitted unless the response includes a walking breakdown,
+  // so the planner never receives invented walking minutes.
   private async transitOptions(origin: Place, destination: Place): Promise<TransportOption[]> {
-    if (!origin.cityCode || !destination.cityCode) return [];
-    const params = new URLSearchParams({ key: process.env.AMAP_KEY!, origin: `${origin.longitude},${origin.latitude}`, destination: `${destination.longitude},${destination.latitude}`, city1: origin.cityCode, city2: destination.cityCode, strategy: '0', show_fields: 'cost' });
     try {
-      const response = await fetch(`https://restapi.amap.com/v5/direction/transit/integrated?${params}`, { signal: this.signal ? AbortSignal.any([this.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000) });
-      const payload = await response.json() as { status?: string; route?: { transits?: { distance?: string; walking_distance?: string; cost?: { duration?: string; transit_fee?: string }; segments?: { bus?: { buslines?: { name?: string }[] } }[] }[] } };
-      if (!response.ok || payload.status !== '1') return [];
-      return (payload.route?.transits ?? []).slice(0, 3).flatMap((path, index) => {
-        const durationMinutes = Math.round(Number(path.cost?.duration) / 60);
-        if (!Number.isFinite(durationMinutes) || durationMinutes < 1) return [];
-        const boardings = (path.segments ?? []).filter(segment => segment.bus?.buslines?.length).length;
-        const lines = [...new Set((path.segments ?? []).flatMap(segment => segment.bus?.buslines ?? []).flatMap(line => line.name ? [line.name] : []))];
-        const fare = Number(path.cost?.transit_fee);
-        return [{ id: `transit:${origin.id}:${destination.id}:${index}`, mode: 'transit' as const, durationMinutes, walkingMinutes: Math.round((Number(path.walking_distance) || 0) / 75), transfers: Math.max(0, boardings - 1), distanceMeters: Number(path.distance) || 0, ...(Number.isFinite(fare) ? { fareYuan: fare } : {}), lines }];
-      });
+      const props = (await this.route(origin, destination, 'transit')).features?.[0]?.properties;
+      const seconds = Number(props?.time);
+      if (!Number.isFinite(seconds) || seconds <= 0) return [];
+      const steps = (props?.legs ?? []).flatMap(leg => leg.steps ?? []);
+      if (!steps.length) return [];
+      const walkingSeconds = steps.filter(step => step.mode === 'walk').reduce((sum, step) => sum + (Number(step.time) || 0), 0);
+      const lines = [...new Set(steps.flatMap(step => step.transit?.route_name ?? step.transit?.short_name ?? []))];
+      const boardings = steps.filter(step => step.mode && step.mode !== 'walk').length;
+      return [{ id: `transit:${origin.id}:${destination.id}:0`, mode: 'transit', durationMinutes: Math.max(1, Math.round(seconds / 60)), walkingMinutes: Math.round(walkingSeconds / 60), transfers: Math.max(0, boardings - 1), distanceMeters: Number(props?.distance) || 0, lines }];
     } catch (error) {
       this.signal?.throwIfAborted();
       return [];
     }
   }
 }
+
+type GeoapifyRoute = {
+  features?: {
+    properties?: {
+      time?: number;
+      distance?: number;
+      legs?: { steps?: { mode?: string; time?: number; transit?: { route_name?: string; short_name?: string } }[] }[];
+    };
+  }[];
+};
