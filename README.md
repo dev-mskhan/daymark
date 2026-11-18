@@ -53,9 +53,21 @@ node scripts/check-services.mjs
 
 The Jev probe uses the same `JEV_BASE_URL` resolution as the app. JevStation gives new accounts 50 free credits (valid 30 days); TypeSafe's own API is pay-as-you-go with no published free tier.
 
+Run `npm run eval:ai` for two synthetic live evaluations of Groq planning and Jev preference decisions. This makes provider calls and may consume credits. Low-confidence Jev answers are surfaced as `unknown` by the app.
+
+Run `npm run test:geoapify:live` to exercise the actual `PlacesProvider` against real New York, Los Angeles, and Chicago addresses and place searches. These requests use the configured Geoapify key and may count against its quota.
+
+## Documentation
+
+- [User guide](docs/USER_GUIDE.md): demo and live planning, saved trips, and troubleshooting.
+- [API reference](docs/API.md): streaming planning, geocoding, profiles, and saved-trip endpoints.
+- [Changelog](CHANGELOG.md): implementation summary and current integration limits.
+- [Phase 1 plan](docs/phase-1-plan.md) and [task tracker](docs/phase-1-tasks.md): scope, decisions, and implementation status.
+
 ### Accounts and saved trips (optional)
 
 Saved trips need a Supabase project. Without these variables the demo and live planning still work; account pages and trip APIs report that accounts are not configured.
+Email sign-in and account creation share one passwordless sign-in screen: Supabase sends a secure link and creates an account if needed, without revealing whether the email is already registered.
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=
@@ -76,9 +88,13 @@ npm run typecheck
 npm run build
 ```
 
+`npm run test:geoapify:live` and `npm run eval:ai` make external provider calls; use them only when their credentials and quotas are available. `npm run db:generate` creates a Drizzle migration after schema changes, and `npm run db:migrate` applies migrations to the configured database.
+
 ## Current scope
 
 The current app plans a single day in USA cities using Geoapify places, routing and static maps. It supports origin geocoding, first/return route legs, streamed planning events, bounded repair, replay/export, and place verification checks for provider-sourced opening hours, timezone, operational status, and accessibility details. A multi-day planner and saved-trip APIs exist; the `/trips` page lets signed-in users create multi-day trips, plan them, save itineraries, export, duplicate, archive and delete. The main page still plans a single anonymous day. The UI supports light and dark themes with a saved preference.
+
+The `/trips` form lets users set each day's time window and optional overnight stop. Live-mode overnight stops are resolved by Geoapify; fixture-mode stops require explicit coordinates and make no provider calls.
 
 Bookings are not available. Verification depends on provider data and live Jev availability; missing or failed checks remain unverified. Visit durations are estimates, and every result should be treated as a draft rather than a guaranteed executable itinerary.
 

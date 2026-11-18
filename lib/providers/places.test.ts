@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { PlacesProvider } from './places';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe('PlacesProvider geocoding', () => {
   it('returns fixture coordinates in fixture mode', async () => {
@@ -135,7 +138,23 @@ describe('PlacesProvider geocoding', () => {
 
     const provider = new PlacesProvider(false);
 
-    await expect(provider.geocode('test')).rejects.toThrow('Geocoding failed');
+    await expect(provider.geocode('test')).rejects.toThrow('Geoapify request failed (500)');
+    vi.unstubAllEnvs();
+  });
+
+  it('accepts valid coordinates on the equator and prime meridian', async () => {
+    vi.stubEnv('GEOAPIFY_API_KEY', 'test-key');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({
+        features: [{ properties: { lat: 0, lon: 0, formatted: 'Null Island' } }],
+      }),
+    );
+
+    await expect(new PlacesProvider(false).geocode('Null Island')).resolves.toMatchObject({
+      latitude: 0,
+      longitude: 0,
+      formattedAddress: 'Null Island',
+    });
     vi.unstubAllEnvs();
   });
 

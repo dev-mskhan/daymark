@@ -7,6 +7,50 @@ const current = [
 const replacement = { index: 1, placeId: 'market', durationMinutes: 45, reason: 'variety' };
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 describe('repair patches', () => {
+  it('evaluates a structured next-step answer against the available candidates', async () => {
+    vi.stubEnv('GROQ_API_KEY', 'test');
+    vi.stubEnv('GROQ_MODEL', 'test-model');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({
+      model: 'test-model',
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            action: 'proposal',
+            activity: { placeId: 'riverside-park', durationMinutes: 60, reason: 'A quiet nature walk fits the request.' },
+            done: false,
+          }),
+        },
+      }],
+    }));
+    const candidate = {
+      id: 'riverside-park',
+      name: 'Riverside Park',
+      address: '',
+      latitude: 40.75,
+      longitude: -73.99,
+      types: ['park', 'nature'],
+      source: 'demo' as const,
+    };
+    const result = await new PlannerProvider(false).nextAction(
+      { destination: 'New York City', startAt: '2026-10-12T09:00:00', endAt: '2026-10-12T19:00:00', preference: 'A quiet nature walk' },
+      [candidate],
+      [],
+      new AbortController().signal,
+      undefined,
+      undefined,
+      [],
+      false,
+    );
+    expect(result).toMatchObject({
+      action: 'proposal',
+      proposal: {
+        activities: [{ id: 'activity-1', placeId: 'riverside-park', durationMinutes: 60 }],
+        done: false,
+        model: 'test-model',
+      },
+    });
+  });
+
   it('preserves server-owned IDs even if a model supplies a replacement ID', () => {
     const result = applyRepair(current, { updates: [{ ...replacement, id: 'new-id' }], removeIndices: [], done: false });
     expect(result.activities.map(a => a.id)).toEqual(['activity-1', 'activity-3']);

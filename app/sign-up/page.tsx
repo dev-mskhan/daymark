@@ -1,6 +1,4 @@
-import Link from "next/link";
-import { AuthForm } from "@/app/components/AuthForm";
-import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { redirect } from "next/navigation";
 
 export default async function SignUpPage({
   searchParams,
@@ -8,16 +6,5 @@ export default async function SignUpPage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const { next } = await searchParams;
-  return (
-    <main className="auth-page">
-      <Link className="back" href="/">
-        ← Daymark
-      </Link>
-      {isSupabaseConfigured() ? (
-        <AuthForm mode="sign-up" next={next} />
-      ) : (
-        <p className="notice">Accounts are not configured on this server.</p>
-      )}
-    </main>
-  );
+  redirect(next ? `/sign-in?next=${encodeURIComponent(next)}` : '/sign-in');
 }

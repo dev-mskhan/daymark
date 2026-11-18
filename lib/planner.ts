@@ -9,10 +9,18 @@ import type { PlanningContext } from './domain';
 import { EXPERIENCE_TYPES } from './search-lenses';
 
 export function validateProposal(proposal: Proposal, current: Activity[], candidates: Place[], repair: boolean) {
-  if (new Set(proposal.activities.map(a => a.id)).size !== proposal.activities.length || new Set(proposal.activities.map(a => a.placeId)).size !== proposal.activities.length) throw new Error('活动或地点 ID 重复。');
-  if (proposal.activities.some(a => !candidates.some(p => p.id === a.placeId))) throw new Error('LLM 引用了候选池之外的地点。');
-  if (repair && proposal.activities.some(a => !current.some(old => old.id === a.id))) throw new Error('修复不能新增节点 ID。');
-  if (!repair && (proposal.activities.length > current.length + 1 || JSON.stringify(proposal.activities.slice(0, current.length)) !== JSON.stringify(current))) throw new Error('生成节点修改了已提交的活动。');
+  if (new Set(proposal.activities.map(a => a.id)).size !== proposal.activities.length || new Set(proposal.activities.map(a => a.placeId)).size !== proposal.activities.length) {
+    throw new Error('Some activities or places are duplicated in the plan. Please try again.');
+  }
+  if (proposal.activities.some(a => !candidates.some(p => p.id === a.placeId))) {
+    throw new Error('The planner referenced a place that is not in the candidate list. Please try again.');
+  }
+  if (repair && proposal.activities.some(a => !current.some(old => old.id === a.id))) {
+    throw new Error('Cannot add new activities during a repair. Please try planning from scratch.');
+  }
+  if (!repair && (proposal.activities.length > current.length + 1 || JSON.stringify(proposal.activities.slice(0, current.length)) !== JSON.stringify(current))) {
+    throw new Error('The planner modified already committed activities. Please try again.');
+  }
 }
 export async function planTrip(request: TripRequest, onEvent: (event: RunEvent) => void = () => {}, signal = new AbortController().signal): Promise<RunResult> {
   const fixture = request.mode !== 'live';

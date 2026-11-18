@@ -101,7 +101,7 @@ describe("collaborative planner", () => {
         [],
         false,
       ),
-    ).toThrow("候选池");
+    ).toThrow("not in the candidate list");
   });
   it("cancels without emitting later versions", async () => {
     const controller = new AbortController();

@@ -198,7 +198,149 @@ describe('validateAccessibility (fixture mode)', () => {
   });
 });
 
+describe('validateAccessibility (live JevStation)', () => {
+  it('batches known-place checks into one request and keeps unknown places explicit', async () => {
+    vi.stubEnv('JEV_API_KEY', 'test-key');
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({
+      code: 0,
+      message: 'ok',
+      data: {
+        model: 'jev-test',
+        answers: {
+          a1: { choice: 'pass', probabilities: { pass: 0.9, flag: 0.05, unknown: 0.05 }, confidence: 0.9 },
+          a2: { choice: 'flag', probabilities: { pass: 0.05, flag: 0.9, unknown: 0.05 }, confidence: 0.9 },
+        },
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const activities = [makeActivity('a1', 'p1'), makeActivity('a2', 'p2'), makeActivity('a3', 'p3')];
+    const places = [
+      makePlace('p1', { accessibilityInfo: { wheelchairAccessible: true } }),
+      makePlace('p2', { accessibilityInfo: { wheelchairAccessible: false } }),
+      makePlace('p3'),
+    ];
+
+    const issues = await new JevProvider(false).validateAccessibility(
+      makeRequest({ constraints: 'wheelchair accessible only' }),
+      places,
+      activities,
+      1,
+      signal,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(Object.keys(requestBody.questions)).toEqual(['a1', 'a2']);
+    expect(issues).toContainEqual(expect.objectContaining({
+      checkId: 'accessibility_fit',
+      status: 'flag',
+      subjectIds: ['a2'],
+    }));
+    expect(issues).toContainEqual(expect.objectContaining({
+      checkId: 'accessibility_fit',
+      status: 'unknown',
+      subjectIds: ['a3'],
+    }));
+  });
+});
+
 describe('validateOpeningHours (live JevStation)', () => {
+  it('reconciles Jev-normalized answer keys to the original subject IDs', async () => {
+    vi.stubEnv('JEV_API_KEY', 'test-key');
+    vi.stubEnv('JEV_BASE_URL', 'https://jevstation.com/api');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      code: 0,
+      message: 'ok',
+      data: {
+        model: 'jev-test',
+        answers: {
+          riverside_park: {
+            type: 'choice',
+            choice: 'pass',
+            probabilities: { pass: 0.9, flag: 0.05, unknown: 0.05 },
+            confidence: 0.9,
+          },
+          history_museum: {
+            type: 'choice',
+            choice: 'flag',
+            probabilities: { pass: 0.05, flag: 0.9, unknown: 0.05 },
+            confidence: 0.9,
+          },
+        },
+      },
+    })));
+    const decisions = await new JevProvider(false).query(
+      makeRequest(),
+      [
+        makePlace('riverside-park', { name: 'Riverside Park', types: ['park', 'nature'] }),
+        makePlace('history-museum', { name: 'City History Museum', types: ['museum', 'history'] }),
+      ],
+      [],
+      { dimension: 'preference_fit', subjectIds: ['riverside-park', 'history-museum'], scope: 'candidate' },
+      1,
+      signal,
+    );
+    expect(decisions).toMatchObject([
+      { subjectId: 'riverside-park', choice: 'pass' },
+      { subjectId: 'history-museum', choice: 'flag' },
+    ]);
+  });
+
+  it('rejects ambiguous normalized answer keys instead of assigning the wrong subject', async () => {
+    vi.stubEnv('JEV_API_KEY', 'test-key');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+      model: 'jev-test',
+      answers: {
+        a_b: { choice: 'pass', probabilities: { pass: 1, flag: 0, unknown: 0 }, confidence: 1 },
+        c: { choice: 'pass', probabilities: { pass: 1, flag: 0, unknown: 0 }, confidence: 1 },
+      },
+    })));
+    await expect(new JevProvider(false).screen(
+      makeRequest(),
+      [
+        makePlace('a-b'),
+        makePlace('a_b'),
+        makePlace('c'),
+      ],
+      signal,
+    )).rejects.toThrow('incomplete or ambiguous answers');
+  });
+
+  it('treats low-confidence candidate and query answers as non-actionable', async () => {
+    vi.stubEnv('JEV_API_KEY', 'test-key');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({
+        model: 'jev-test',
+        answers: {
+          'riverside-park': { choice: 'pass', probabilities: { pass: 0.6, flag: 0.3, unknown: 0.1 }, confidence: 0.4 },
+          'history-museum': { choice: 'flag', probabilities: { pass: 0.1, flag: 0.8, unknown: 0.1 }, confidence: 0.9 },
+        },
+      }))
+      .mockResolvedValueOnce(Response.json({
+        model: 'jev-test',
+        answers: {
+          'riverside-park': { choice: 'pass', probabilities: { pass: 0.6, flag: 0.3, unknown: 0.1 }, confidence: 0.4 },
+          'history-museum': { choice: 'flag', probabilities: { pass: 0.1, flag: 0.8, unknown: 0.1 }, confidence: 0.9 },
+        },
+      })));
+    const candidates = [
+      makePlace('riverside-park'),
+      makePlace('history-museum'),
+    ];
+    const jev = new JevProvider(false);
+    const screened = await jev.screen(makeRequest(), candidates, signal);
+    const decisions = await jev.query(
+      makeRequest(),
+      candidates,
+      [],
+      { dimension: 'preference_fit', subjectIds: ['riverside-park', 'history-museum'], scope: 'candidate' },
+      1,
+      signal,
+    );
+    expect(screened.map(item => item.label)).toEqual(['needs_information', 'alternative']);
+    expect(decisions.map(item => item.choice)).toEqual(['unknown', 'flag']);
+  });
+
   it('accepts JevStation response envelopes', async () => {
     vi.stubEnv('JEV_API_KEY', 'test-key');
     vi.stubEnv('JEV_BASE_URL', 'https://jevstation.com/api');
@@ -228,6 +370,19 @@ describe('validateOpeningHours (live JevStation)', () => {
     const issues = await provider.validateOpeningHours(request, [place], activities, [], 1, signal);
 
     expect(issues).toEqual([]);
+    const cachedIssues = await provider.validateOpeningHours(request, [place], activities, [], 2, signal);
+    expect(cachedIssues).toEqual(issues);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await provider.validateOpeningHours(
+      makeRequest({ mode: 'live', startAt: '2026-10-12T11:00:00' }),
+      [place],
+      activities,
+      [],
+      3,
+      signal,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://jevstation.com/api/v1/systemone',
       expect.objectContaining({

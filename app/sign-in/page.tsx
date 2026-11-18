@@ -14,7 +14,7 @@ export default async function SignInPage({
         ← Daymark
       </Link>
       {isSupabaseConfigured() ? (
-        <AuthForm mode="sign-in" next={next} notice={error ?? reason} />
+        <AuthForm next={next} notice={error ?? reason} />
       ) : (
         <p className="notice">Accounts are not configured on this server.</p>
       )}

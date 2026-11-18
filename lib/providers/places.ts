@@ -35,6 +35,13 @@ export interface GeocodedLocation {
   confidence: 'high' | 'medium' | 'low';
 }
 
+export class GeocodingNotFoundError extends Error {
+  constructor(address: string) {
+    super(`Could not geocode "${address}". Please check the address and try again.`);
+    this.name = 'GeocodingNotFoundError';
+  }
+}
+
 export class PlacesProvider {
   constructor(
     private fixture = false,
@@ -46,32 +53,15 @@ export class PlacesProvider {
 
   async geocode(address: string): Promise<GeocodedLocation> {
     if (!this.isLive) {
-      // Fixture mode: return Penn Station coordinates
+      // Fixture mode: Penn Station, New York City
       return {
-        latitude: 40.7506,
-        longitude: -73.9935,
+        latitude: 40.7494,
+        longitude: -73.9921,
         formattedAddress: 'Penn Station, New York City',
         confidence: 'high',
       };
     }
-    if (!process.env.GEOAPIFY_API_KEY)
-      throw new Error('Live mode requires GEOAPIFY_API_KEY.');
-    const params = new URLSearchParams({
-      text: address,
-      apiKey: process.env.GEOAPIFY_API_KEY,
-      limit: '1',
-    });
-    const response = await fetch(
-      `https://api.geoapify.com/v1/geocode/search?${params}`,
-      {
-        signal: this.signal
-          ? AbortSignal.any([this.signal, AbortSignal.timeout(15_000)])
-          : AbortSignal.timeout(15_000),
-      },
-    );
-    if (!response.ok)
-      throw new Error(`Geocoding failed (${response.status})`);
-    const payload = (await response.json()) as {
+    const payload = await geoapifyJson<{
       features?: {
         properties?: {
           lat?: number;
@@ -80,18 +70,16 @@ export class PlacesProvider {
           rank?: { confidence?: number };
         };
       }[];
-    };
+    }>('/v1/geocode/search', { text: address, limit: '1' }, { signal: this.signal, timeoutMs: 15_000 });
     const feature = payload.features?.[0];
     const props = feature?.properties;
     if (
-      !props?.lat ||
-      !props?.lon ||
+      typeof props?.lat !== 'number' ||
+      typeof props.lon !== 'number' ||
       !Number.isFinite(props.lat) ||
       !Number.isFinite(props.lon)
     ) {
-      throw new Error(
-        `Could not geocode "${address}". Please check the address and try again.`,
-      );
+      throw new GeocodingNotFoundError(address);
     }
     const confidenceScore = props.rank?.confidence ?? 0;
     const confidence: GeocodedLocation['confidence'] =
@@ -215,27 +203,26 @@ function deduplicate(places: Place[]) {
   return kept;
 }
 function demoPlaces(destination: string): Place[] {
-  const center = { latitude: 40.758, longitude: -73.9855 };
-  const names: [string, string[], string][] = [
-    ['The Metropolitan Museum of Art', ['museum', 'art'], 'Mo-Tu,Th-Su 10:00-17:00; Fr-Sa 10:00-21:00; We closed'],
-    ['Central Park', ['park', 'nature'], '24/7'],
-    ['Chelsea Gallery Row', ['art_gallery', 'art'], 'Tu-Sa 10:00-18:00'],
-    ['Chelsea Market', ['market', 'food'], 'Mo-Sa 07:00-21:00; Su 08:00-20:00'],
-    ['The High Line', ['park', 'architecture'], '07:00-22:00'],
-    ['Washington Square Park', ['park', 'local_life'], '24/7'],
-    ['Greenwich Village Restaurant', ['restaurant', 'food'], 'Mo-Su 11:30-22:00'],
-    ['Empire State Building', ['landmark', 'architecture'], 'Mo-Su 09:00-23:00'],
+  const places: [string, number, number, string[], string?][] = [
+    ['The Metropolitan Museum of Art',   40.7794, -73.9632, ['museum', 'art'],                'Mo-Tu,Th-Su 10:00-17:00; Fr-Sa 10:00-21:00; We closed'],
+    ['Central Park',                     40.7851, -73.9683, ['park', 'nature'],               '24/7'],
+    ['Chelsea Gallery Row',              40.7484, -74.0048, ['art_gallery', 'art']],
+    ['Chelsea Market',                   40.7424, -74.0060, ['market', 'food'],               'Mo-Sa 07:00-21:00; Su 08:00-20:00'],
+    ['The High Line',                    40.7480, -74.0048, ['park', 'architecture'],          '07:00-22:00'],
+    ['Washington Square Park',           40.7308, -73.9973, ['park', 'local_life'],           '24/7'],
+    ['Greenwich Village Restaurant',     40.7282, -74.0028, ['restaurant', 'food'],           'Mo-Su 11:30-22:00'],
+    ['Empire State Building',            40.7484, -73.9967, ['landmark', 'architecture'],     'Mo-Su 09:00-23:00'],
   ];
-  return names.map(([name, types, openingHoursRaw], index) => ({
+  return places.map(([name, latitude, longitude, types, openingHoursRaw], index) => ({
     id: `demo-${index}`,
     name,
-    address: `${destination} · Demo location`,
-    latitude: center.latitude + Math.sin(index) * 0.018,
-    longitude: center.longitude + Math.cos(index) * 0.018,
+    address: `${name}, ${destination}`,
+    latitude,
+    longitude,
     types: [...types],
     rating: 4.1 + (index % 4) * 0.2,
     source: 'demo' as const,
-    openingHours: openingHoursRaw,
+    ...(openingHoursRaw ? { openingHours: openingHoursRaw } : {}),
     timezone: 'America/New_York',
     operationalStatus: 'operational' as const,
     lastVerified: '2026-01-01T00:00:00Z',

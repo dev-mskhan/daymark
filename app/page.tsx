@@ -14,6 +14,7 @@ import {
   Pause,
   PersonSimpleWalk,
   Play,
+  Plus,
   Moon,
   SealCheck,
   Stop,
@@ -25,11 +26,19 @@ import {
 import type {
   Activity,
   DaySegment,
+  MultiDayRequest,
   Place,
   RunEvent,
   Snapshot,
 } from "@/lib/domain";
-import { GeoapifyMap } from "@/app/components/GeoapifyMap";
+import { buildSchedule, formatTime, toMinutes } from "@/lib/schedule";
+import {
+  buildPreferenceVerdicts,
+  computeBreakBlocks,
+  type BreakBlock,
+  type PreferenceVerdict,
+} from "@/lib/preference-compliance";
+import { LeafletMap } from "@/app/components/LeafletMap";
 import { DayDial, type DialStop } from "@/app/components/DayDial";
 import { DayAccordion } from "@/app/components/DayAccordion";
 import { AccountMenu } from "@/app/components/AccountMenu";
@@ -38,16 +47,39 @@ import { useAccount } from "@/lib/auth/use-account";
 const defaults = {
   origin: "Penn Station, New York City",
   destination: "New York City",
-  date: "2026-10-12",
-  startTime: "09:00",
-  endTime: "19:00",
+  days: [
+    {
+      date: "2026-10-12",
+      startTime: "09:00",
+      endTime: "19:00",
+    },
+    {
+      date: "2026-10-13",
+      startTime: "09:00",
+      endTime: "18:00",
+    }
+  ],
   partySize: 1,
   preference:
-    "I enjoy art, local neighborhoods and food. Include one art museum, but avoid repetitive museum visits. Keep the day relaxed.",
+    "I enjoy art, local neighborhoods and food. Include one art museum but avoid repetitive museum visits. Keep the day relaxed.",
   constraints:
     "Avoid long cross-city transfers and keep at least one relaxed break.",
 };
-const liveDefaults = { ...defaults, destination: "New York City" };
+
+const liveDefaults = { 
+  origin: "",
+  destination: "Brooklyn, New York", 
+  days: [
+    {
+      date: new Date().toISOString().split('T')[0],
+      startTime: "09:00",
+      endTime: "19:00",
+    }
+  ],
+  partySize: 1,
+  preference: "I enjoy art, local food, and discovering hidden gems. Keep the pace relaxed.",
+  constraints: "Avoid crowded tourist traps."
+};
 
 export default function Home() {
   const [form, setForm] = useState(defaults);
@@ -95,9 +127,49 @@ export default function Home() {
     ? reviews.reduce((sum, e) => sum + (e.latencyMs ?? 0), 0) / reviews.length
     : null;
   const name = (id: string) => candidates.find((p) => p.id === id)?.name ?? id;
-  const windowStart = toMinutes(form.startTime);
-  const windowEnd = toMinutes(form.endTime);
-  const schedule = buildSchedule(activities, displayed?.routes ?? []);
+  const windowStart = toMinutes(form.days[0].startTime);
+  const windowEnd = toMinutes(form.days[0].endTime);
+  // Phase 1.1: Pass firstLegMinutes so stop 1 arrival = windowStart + firstLeg
+  const firstLegMinutes = displayed?.firstLeg?.selected?.durationMinutes ?? (displayed?.origin ? null : 0);
+  const schedule = buildSchedule(activities, displayed?.routes ?? [], firstLegMinutes);
+
+  // Phase 1.6: Unused time notice
+  const lastActivityEnd: number | null = (() => {
+    if (!activities.length || windowStart === null) return null;
+    const lastOffset = schedule[activities.length - 1];
+    if (lastOffset === null) return null;
+    return lastOffset + activities[activities.length - 1].durationMinutes;
+  })();
+
+  // Phase 1.4: Preference compliance verdicts
+  const preferenceVerdicts = useMemo(
+    () =>
+      !loading && activities.length
+        ? buildPreferenceVerdicts(
+            form.preference,
+            form.constraints,
+            activities,
+            candidates,
+            displayed?.routes ?? [],
+          )
+        : [],
+    [loading, activities, candidates, displayed?.routes, form.preference, form.constraints],
+  );
+
+  // Phase 1.5: Break blocks for display
+  const breakBlocks = useMemo(
+    () =>
+      windowStart !== null
+        ? computeBreakBlocks(
+            activities,
+            schedule,
+            windowStart,
+            form.preference,
+            form.constraints,
+          )
+        : [],
+    [activities, schedule, windowStart, form.preference, form.constraints],
+  );
   const dialStops: DialStop[] = [];
   activities.forEach((a, i) => {
     const offset = schedule[i];
@@ -200,6 +272,7 @@ export default function Home() {
     setCursor(null);
     setReplaying(false);
     setAccepted(null);
+    setMultiDaySegments([]);
     let receivedCandidates = false;
     try {
       if (mode === "live") {
@@ -232,26 +305,44 @@ export default function Home() {
       setChecking(false);
       setStarted(true);
       setLoading(true);
-      const response = await fetch("/api/plan", {
+      const isMultiDay = form.days.length > 1;
+      const response = await fetch(isMultiDay ? "/api/multiday-plan" : "/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-        body: JSON.stringify({
-          origin: form.origin,
-          destination: form.destination,
-          partySize: form.partySize,
-          preference: form.preference,
-          constraints: form.constraints,
-          startAt: `${form.date}T${form.startTime}:00`,
-          endAt: `${form.date}T${form.endTime}:00`,
-          mode,
-        }),
+        body: isMultiDay
+          ? JSON.stringify({
+              origin: form.origin,
+              destination: form.destination,
+              partySize: form.partySize,
+              preference: form.preference,
+              constraints: form.constraints,
+              days: form.days.map((day, i) => ({
+                dayNumber: i + 1,
+                date: day.date,
+                startTime: day.startTime,
+                endTime: day.endTime,
+              })),
+              mode,
+            })
+          : JSON.stringify({
+              origin: form.origin,
+              destination: form.destination,
+              partySize: form.partySize,
+              preference: form.preference,
+              constraints: form.constraints,
+              startAt: `${form.days[0].date}T${form.days[0].startTime}:00`,
+              endAt: `${form.days[0].date}T${form.days[0].endTime}:00`,
+              mode,
+            }),
       });
       if (!response.ok)
         throw new Error((await response.json()).error ?? "Planning failed");
       const reader = response.body!.getReader(),
         decoder = new TextDecoder();
       let buffer = "";
+      // Track per-day segments for multi-day
+      const daySegmentMap = new Map<number, { candidates: Place[]; snapshot: Snapshot; events: RunEvent[] }>();
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -260,19 +351,43 @@ export default function Home() {
         buffer = lines.pop()!;
         for (const line of lines) {
           if (!line || generation !== run.current) continue;
-          const update = JSON.parse(line) as RunEvent;
+          const update = JSON.parse(line) as RunEvent & { dayNumber?: number };
           if (update.type === "error") throw new Error(update.message);
           setEvents((previous) => [...previous, update]);
           if (update.candidates) {
             receivedCandidates = true;
             setCandidates(update.candidates);
+            if (isMultiDay && update.dayNumber) {
+              const existing = daySegmentMap.get(update.dayNumber) ?? { candidates: [], snapshot: null as unknown as Snapshot, events: [] };
+              daySegmentMap.set(update.dayNumber, { ...existing, candidates: update.candidates });
+            }
           }
-          if (update.snapshot) setSnapshot(update.snapshot);
+          if (update.snapshot) {
+            setSnapshot(update.snapshot);
+            if (isMultiDay && update.dayNumber) {
+              const existing = daySegmentMap.get(update.dayNumber) ?? { candidates: [], snapshot: update.snapshot, events: [] };
+              daySegmentMap.set(update.dayNumber, { ...existing, snapshot: update.snapshot });
+            }
+          }
+          // Build multiDaySegments progressively
+          if (isMultiDay && daySegmentMap.size > 0) {
+            const segments = Array.from(daySegmentMap.entries())
+              .sort(([a], [b]) => a - b)
+              .filter(([, seg]) => seg.snapshot)
+              .map(([dayNumber, seg]) => ({
+                dayNumber,
+                startingFrom: form.days[dayNumber - 1]?.date ?? '',
+                snapshot: seg.snapshot,
+                candidates: seg.candidates,
+                events: seg.events,
+              }));
+            if (segments.length > 0) setMultiDaySegments(segments);
+          }
         }
       }
     } catch (caught) {
       if (generation === run.current) {
-        if (!receivedCandidates && !controller.signal.aborted)
+        if (!controller.signal.aborted)
           setStarted(false);
         setError(
           controller.signal.aborted
@@ -309,7 +424,8 @@ export default function Home() {
   }
   function chooseMode(next: "fixture" | "live") {
     setMode(next);
-    setForm(next === "live" ? liveDefaults : defaults);
+    const newDefaults = next === "live" ? liveDefaults : defaults;
+    setForm(newDefaults);
     setError("");
     setShowCoverage(next === "live" && !coverageDismissed);
   }
@@ -468,56 +584,110 @@ export default function Home() {
                   />
                 </label>
               </div>
-              <div className="form-row">
-                <label className="field">
-                  <span>Date</span>
-                  <input
-                    type="date"
-                    value={form.date}
-                    onChange={(e) => setForm({ ...form, date: e.target.value })}
-                    required
-                    disabled={checking}
-                  />
-                </label>
-                <label className="field">
-                  <span>From</span>
-                  <input
-                    type="time"
-                    value={form.startTime}
-                    onChange={(e) =>
-                      setForm({ ...form, startTime: e.target.value })
-                    }
-                    required
-                    disabled={checking}
-                  />
-                </label>
-                <label className="field">
-                  <span>Until</span>
-                  <input
-                    type="time"
-                    value={form.endTime}
-                    onChange={(e) =>
-                      setForm({ ...form, endTime: e.target.value })
-                    }
-                    required
-                    disabled={checking}
-                  />
-                </label>
-                <label className="field">
-                  <span>Travelers</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    value={form.partySize}
-                    onChange={(e) =>
-                      setForm({ ...form, partySize: Number(e.target.value) })
-                    }
-                    required
-                    disabled={checking}
-                  />
-                </label>
-              </div>
+              {form.days.map((day, dayIndex) => (
+                <div key={dayIndex} className="multi-day-row">
+                  {form.days.length > 1 && (
+                    <div className="day-header">
+                      <strong>Day {dayIndex + 1}</strong>
+                      {form.days.length > 1 && (
+                        <button
+                          type="button"
+                          className="icon-button icon-button-small"
+                          aria-label={`Remove day ${dayIndex + 1}`}
+                          onClick={() => {
+                            const newDays = form.days.filter((_, i) => i !== dayIndex);
+                            setForm({ ...form, days: newDays });
+                          }}
+                          disabled={checking}
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <div className="form-row">
+                    <label className="field">
+                      <span>{form.days.length === 1 ? 'Date' : `Date (Day ${dayIndex + 1})`}</span>
+                      <input
+                        type="date"
+                        value={day.date}
+                        onChange={(e) => {
+                          const newDays = [...form.days];
+                          newDays[dayIndex] = { ...newDays[dayIndex], date: e.target.value };
+                          setForm({ ...form, days: newDays });
+                        }}
+                        required
+                        disabled={checking}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>From</span>
+                      <input
+                        type="time"
+                        value={day.startTime}
+                        onChange={(e) => {
+                          const newDays = [...form.days];
+                          newDays[dayIndex] = { ...newDays[dayIndex], startTime: e.target.value };
+                          setForm({ ...form, days: newDays });
+                        }}
+                        required
+                        disabled={checking}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Until</span>
+                      <input
+                        type="time"
+                        value={day.endTime}
+                        onChange={(e) => {
+                          const newDays = [...form.days];
+                          newDays[dayIndex] = { ...newDays[dayIndex], endTime: e.target.value };
+                          setForm({ ...form, days: newDays });
+                        }}
+                        required
+                        disabled={checking}
+                      />
+                    </label>
+                    {dayIndex === 0 && (
+                      <label className="field">
+                        <span>Travelers</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="20"
+                          value={form.partySize}
+                          onChange={(e) =>
+                            setForm({ ...form, partySize: Number(e.target.value) })
+                          }
+                          required
+                          disabled={checking}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {form.days.length < 7 && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    const lastDay = form.days[form.days.length - 1];
+                    const nextDate = new Date(lastDay.date);
+                    nextDate.setDate(nextDate.getDate() + 1);
+                    const newDay = {
+                      date: nextDate.toISOString().split('T')[0],
+                      startTime: lastDay.startTime,
+                      endTime: lastDay.endTime,
+                    };
+                    setForm({ ...form, days: [...form.days, newDay] });
+                  }}
+                  disabled={checking}
+                >
+                  <Plus size={18} />
+                  Add Day {form.days.length + 1}
+                </button>
+              )}
               <label className="field">
                 <span>Preferences</span>
                 <textarea
@@ -613,19 +783,13 @@ export default function Home() {
               </p>
             </article>
             <div className="map-wrap">
-              <div className="map-ring">
-                <div className="map-stage">
-                  {mode === "live" ? (
-                    <GeoapifyMap points={points} isDarkTheme={isDarkTheme} />
-                  ) : (
-                    <FixturePlot points={points} positions={positions} />
-                  )}
-                </div>
+              <div className="map-panel">
+                <LeafletMap points={points} isDarkTheme={isDarkTheme} />
               </div>
               <p className="map-note">
                 {mode === "live"
-                  ? "Map data from Geoapify and OpenStreetMap. The line shows stop order, not the route."
-                  : "Sample data. Positions are schematic and the dashed line is not a route."}
+                  ? "Live data from Geoapify and OpenStreetMap. Pan, zoom, and click any marker."
+                  : "Sample fixture stops. Pan, zoom, and click any marker."}
               </p>
               <div className="run-status">
                 {loading ? (
@@ -795,7 +959,7 @@ export default function Home() {
               <div className="timeline">
                 {displayed?.origin && displayed?.firstLeg && (
                   <article className="activity" key="origin">
-                    <time>{form.startTime}</time>
+                    <time>{form.days[0].startTime}</time>
                     <div className="timeline-node">
                       <span>⌂</span>
                     </div>
@@ -803,25 +967,15 @@ export default function Home() {
                       <h3>{displayed.origin.formattedAddress}</h3>
                       <p className="stay">Starting point</p>
                       {displayed.firstLeg.selected && activities.length > 0 && (
-                        <>
-                          <p className="travel">
-                            {displayed.firstLeg.selected.mode === "transit" ? (
-                              <Train size={18} />
-                            ) : (
-                              <PersonSimpleWalk size={18} />
-                            )}
-                            {displayed.firstLeg.selected.mode === "transit"
-                              ? `Transit ${displayed.firstLeg.selected.durationMinutes} min, ${displayed.firstLeg.selected.walkingMinutes} min on foot${displayed.firstLeg.selected.transfers ? `, ${displayed.firstLeg.selected.transfers} transfer${displayed.firstLeg.selected.transfers > 1 ? "s" : ""}` : ""}`
-                              : `Walk ${displayed.firstLeg.selected.durationMinutes} min`}
-                          </p>
-                          {displayed.firstLeg.selected.lines.length ? (
-                            <p className="travel-lines">
-                              {displayed.firstLeg.selected.lines.join(
-                                ", then ",
-                              )}
-                            </p>
-                          ) : null}
-                        </>
+                        <p className="travel">
+                          {displayed.firstLeg.selected.mode === "transit" ? (
+                            <Train size={18} />
+                          ) : (
+                            <PersonSimpleWalk size={18} />
+                          )}
+                          {/* Phase 1.3: clean transit label, no "Demo Metro Line" */}
+                          {formatTransitLabel(displayed.firstLeg.selected, displayed.firstLeg.selected.durationMinutes)}
+                        </p>
                       )}
                     </div>
                   </article>
@@ -829,101 +983,72 @@ export default function Home() {
                 {activities.map((a, i) => {
                   const place = candidates.find((p) => p.id === a.placeId);
                   const offset = schedule[i];
-                  const start =
+                  // Phase 1.1: show both arrive and depart times
+                  const arriveTime =
                     offset === null || offset === undefined
                       ? "TBD"
-                      : formatTime(form.startTime, offset);
+                      : formatTime(form.days[0].startTime, offset);
+                  const departTime =
+                    offset === null || offset === undefined
+                      ? null
+                      : formatTime(form.days[0].startTime, offset + a.durationMinutes);
                   const issues =
                     displayed?.issues.filter((issue) =>
                       issue.subjectIds.includes(a.id),
                     ) ?? [];
-                  const transport = displayed?.transportLegs?.[i - 1]?.selected;
-                  const walkMinutes = displayed?.routes[i - 1];
+                  // Phase 1.3: first leg uses firstLeg, later legs use transportLegs
+                  const transport = i === 0
+                    ? displayed?.firstLeg?.selected
+                    : displayed?.transportLegs?.[i - 1]?.selected;
+                  const transitMinutes = i === 0
+                    ? displayed?.firstLeg?.selected?.durationMinutes ?? null
+                    : displayed?.routes[i - 1];
+
+                  // Phase 1.2: 3-state Open/Closed/Unverified badge
+                  const openStatus = getOpenStatus(place, displayed?.issues ?? [], a.id);
+
+                  // Phase 1.3: clean transit label (no "Demo Metro Line")
+                  const transitLabel = formatTransitLabel(transport, transitMinutes);
+
                   return (
                     <article className="activity" key={a.id}>
-                      <time>{start}</time>
+                      <time className="arrive-time">{arriveTime}</time>
                       <div className="timeline-node">
                         <span>{i + 1}</span>
                       </div>
                       <div
                         className={`activity-body ${issues.some((issue) => issue.status === "flag") ? "flagged" : ""}`}
                       >
-                        {i > 0 && (
+                        {/* Phase 1.3: show transit for every leg including first */}
+                        {transitLabel && (
                           <p className="travel">
                             {transport?.mode === "transit" ? (
                               <Train size={18} />
                             ) : (
                               <PersonSimpleWalk size={18} />
                             )}
-                            {transport?.mode === "transit"
-                              ? `Transit ${transport.durationMinutes} min, ${transport.walkingMinutes} min on foot${transport.transfers ? `, ${transport.transfers} transfer${transport.transfers > 1 ? "s" : ""}` : ""}`
-                              : `Walk ${walkMinutes ?? "unknown"} min`}
+                            {transitLabel}
                           </p>
                         )}
-                        {transport?.lines.length ? (
-                          <p className="travel-lines">
-                            {transport.lines.join(", then ")}
-                          </p>
-                        ) : null}
                         <h3>{place?.name ?? a.placeId}</h3>
-                        <p className="stay">
-                          Stay about {a.durationMinutes} min
-                        </p>
+                        <div className="stop-times">
+                          <span className="time-label">Arrive {arriveTime}</span>
+                          {departTime && <span className="time-sep">·</span>}
+                          {departTime && <span className="time-label">Depart {departTime}</span>}
+                          <span className="time-sep">·</span>
+                          <span className="time-label">{a.durationMinutes} min</span>
+                        </div>
                         <p className="reason">{a.reason}</p>
+                        {/* Phase 1.2: 3-state status badge */}
                         {place && (
                           <div className="verification-badges">
-                            {place.formattedOpeningHours && (
-                              <span
-                                className="badge badge-verified"
-                                title={`Opening hours verified${place.lastVerified ? ` as of ${new Date(place.lastVerified).toLocaleDateString()}` : ""}`}
-                              >
-                                ✓ Hours verified
-                              </span>
-                            )}
-                            {place.operationalStatus === "operational" && (
-                              <span
-                                className="badge badge-verified"
-                                title="Place is confirmed operational"
-                              >
-                                ✓ Open
-                              </span>
-                            )}
-                            {place.operationalStatus ===
-                              "temporarily_closed" && (
-                              <span
-                                className="badge badge-warning"
-                                title="Place is temporarily closed"
-                              >
-                                ⚠ Temp. closed
-                              </span>
-                            )}
-                            {place.operationalStatus ===
-                              "permanently_closed" && (
-                              <span
-                                className="badge badge-warning"
-                                title="Place is permanently closed"
-                              >
-                                ✗ Closed permanently
-                              </span>
-                            )}
+                            <OpenStatusBadge status={openStatus} lastVerified={place.lastVerified} />
                             {place.accessibilityInfo?.wheelchairAccessible && (
                               <span
                                 className="badge badge-info"
                                 title="Wheelchair accessible"
                               >
                                 ♿ Accessible
-                              </span>
-                            )}
-                            {place.timezone && (
-                              <span
-                                className="badge badge-info"
-                                title={`Timezone: ${place.timezone}`}
-                              >
-                                🕐{" "}
-                                {place.timezone
-                                  .split("/")
-                                  .pop()
-                                  ?.replace("_", " ")}
                               </span>
                             )}
                           </div>
@@ -970,7 +1095,7 @@ export default function Home() {
                       <time>
                         {schedule[activities.length - 1] !== null
                           ? formatTime(
-                              form.startTime,
+                              form.days[0].startTime,
                               schedule[activities.length - 1]! +
                                 activities[activities.length - 1]
                                   .durationMinutes +
@@ -984,29 +1109,18 @@ export default function Home() {
                       </div>
                       <div className="activity-body">
                         {displayed.returnLeg.selected && (
-                          <>
-                            <p className="travel">
-                              {displayed.returnLeg.selected.mode ===
-                              "transit" ? (
-                                <Train size={18} />
-                              ) : (
-                                <PersonSimpleWalk size={18} />
-                              )}
-                              {displayed.returnLeg.selected.mode === "transit"
-                                ? `Transit ${displayed.returnLeg.selected.durationMinutes} min, ${displayed.returnLeg.selected.walkingMinutes} min on foot${displayed.returnLeg.selected.transfers ? `, ${displayed.returnLeg.selected.transfers} transfer${displayed.returnLeg.selected.transfers > 1 ? "s" : ""}` : ""}`
-                                : `Walk ${displayed.returnLeg.selected.durationMinutes} min`}
-                            </p>
-                            {displayed.returnLeg.selected.lines.length ? (
-                              <p className="travel-lines">
-                                {displayed.returnLeg.selected.lines.join(
-                                  ", then ",
-                                )}
-                              </p>
-                            ) : null}
-                          </>
+                          <p className="travel">
+                            {displayed.returnLeg.selected.mode === "transit" ? (
+                              <Train size={18} />
+                            ) : (
+                              <PersonSimpleWalk size={18} />
+                            )}
+                            {/* Phase 1.3: clean transit label */}
+                            {formatTransitLabel(displayed.returnLeg.selected, displayed.returnLeg.selected.durationMinutes)}
+                          </p>
                         )}
                         <h3>{displayed.origin.formattedAddress}</h3>
-                        <p className="stay">Return to origin</p>
+                        <p className="stay">Return to starting point</p>
                       </div>
                     </article>
                   )}
@@ -1016,6 +1130,23 @@ export default function Home() {
                   </p>
                 )}
               </div>
+              {/* Phase 1.6: Unused time notice */}
+              {!loading && activities.length > 0 && lastActivityEnd !== null && windowStart !== null && windowEnd !== null && (() => {
+                const endWindowOffset = windowEnd - windowStart;
+                const unusedMinutes = endWindowOffset - lastActivityEnd;
+                if (unusedMinutes < 30) return null;
+                const endsAtTime = formatTime(form.days[0].startTime, lastActivityEnd);
+                const windowEndTime = form.days[0].endTime;
+                return (
+                  <div className="notice-box ends-early-notice" role="status">
+                    <span className="notice-icon"><Info size={18} /></span>
+                    <div>
+                      <strong>Ends early at {endsAtTime}</strong>
+                      <p>Your window runs until {windowEndTime} — {unusedMinutes} min unused. You could add another stop or shorten your day.</p>
+                    </div>
+                  </div>
+                );
+              })()}
             </section>
 
             {/* Task 4.23-4.28: Multi-day accordion — shown when multiple day segments exist */}
@@ -1027,8 +1158,8 @@ export default function Home() {
                 </div>
                 <DayAccordion
                   segments={multiDaySegments}
-                  startTimes={multiDaySegments.map(() => form.startTime)}
-                  endTimes={multiDaySegments.map(() => form.endTime)}
+                  startTimes={multiDaySegments.map((seg, i) => form.days[i]?.startTime ?? form.days[0].startTime)}
+                  endTimes={multiDaySegments.map((seg, i) => form.days[i]?.endTime ?? form.days[0].endTime)}
                   activeDay={activeDay}
                   onDayChange={setActiveDay}
                   candidateName={(placeId) =>
@@ -1247,32 +1378,6 @@ function plotPositions(points: Place[]) {
   }));
 }
 
-function buildSchedule(activities: Activity[], routes: (number | null)[]) {
-  const offsets: (number | null)[] = [];
-  let elapsed: number | null = 0;
-  for (let i = 0; i < activities.length; i++) {
-    if (i > 0) {
-      const transit = routes[i - 1];
-      elapsed =
-        elapsed === null || transit === null || transit === undefined
-          ? null
-          : elapsed + transit;
-    }
-    offsets.push(elapsed);
-    if (elapsed !== null) elapsed += activities[i].durationMinutes;
-  }
-  return offsets;
-}
-
-function toMinutes(value: string) {
-  const match = /^(\d{2}):(\d{2})$/.exec(value);
-  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
-}
-function formatTime(start: string, offset: number) {
-  const [h, m] = start.split(":").map(Number);
-  const total = h * 60 + m + offset;
-  return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-}
 
 function placeUrl(place: Place) {
   if (place.source === "geoapify")
@@ -1332,4 +1437,107 @@ function TimingTrace({
       </div>
     </section>
   );
+}
+
+// ─── Phase 1.2: 3-state Open/Closed/Unverified badge ─────────────────────────
+
+type OpenStatus = 'open' | 'closed' | 'temporarily_closed' | 'unverified';
+
+function getOpenStatus(
+  place: Place | undefined,
+  issues: { checkId: string; subjectIds: string[]; status: string }[],
+  activityId: string,
+): OpenStatus {
+  if (!place) return 'unverified';
+
+  // Permanently or temporarily closed — deterministic from data
+  if (place.operationalStatus === 'permanently_closed') return 'closed';
+  if (place.operationalStatus === 'temporarily_closed') return 'temporarily_closed';
+
+  // Check if Jev flagged opening hours for this activity
+  const hoursFlagged = issues.some(
+    (i) => i.checkId === 'opening_hours_fit' && i.status === 'flag' && i.subjectIds.includes(activityId),
+  );
+  if (hoursFlagged) return 'closed';
+
+  // "Open" may only appear when hours were actually verified
+  if (place.formattedOpeningHours && place.operationalStatus === 'operational') return 'open';
+
+  return 'unverified';
+}
+
+function OpenStatusBadge({
+  status,
+  lastVerified,
+}: {
+  status: OpenStatus;
+  lastVerified?: string;
+}) {
+  const verifiedDate = lastVerified
+    ? ` as of ${new Date(lastVerified).toLocaleDateString()}`
+    : '';
+
+  if (status === 'open') {
+    return (
+      <span
+        className="badge badge-verified status-badge"
+        title={`Hours verified${verifiedDate}. Likely open during scheduled visit.`}
+        aria-label="Open — hours verified"
+      >
+        ✓ Open
+      </span>
+    );
+  }
+  if (status === 'closed') {
+    return (
+      <span
+        className="badge badge-error status-badge"
+        title="Confirmed closed during scheduled visit."
+        aria-label="Closed — confirmed"
+      >
+        ✗ Closed
+      </span>
+    );
+  }
+  if (status === 'temporarily_closed') {
+    return (
+      <span
+        className="badge badge-warning status-badge"
+        title="Place is temporarily closed — verify before visiting."
+        aria-label="Temporarily closed"
+      >
+        ⚠ Temp. closed
+      </span>
+    );
+  }
+  // unverified
+  return (
+    <span
+      className="badge badge-info status-badge"
+      title="Opening hours not verified. Check before visiting."
+      aria-label="Hours not verified"
+    >
+      ? Unverified
+    </span>
+  );
+}
+
+// ─── Phase 1.3: Clean transit label (no "Demo Metro Line") ───────────────────
+
+function formatTransitLabel(
+  transport: { mode: string; durationMinutes: number; walkingMinutes?: number; transfers?: number; lines?: string[] } | null | undefined,
+  transitMinutes: number | null | undefined,
+): string | null {
+  if (!transport) {
+    if (transitMinutes == null) return null;
+    return `Walk ${transitMinutes} min (estimated)`;
+  }
+  if (transport.mode === 'walk') {
+    return `Walk ${transport.durationMinutes} min`;
+  }
+  // Transit: show duration + walking access, but no line names (they may be demo/fake)
+  let label = `Transit ${transport.durationMinutes} min`;
+  if (transport.walkingMinutes) label += `, ${transport.walkingMinutes} min on foot`;
+  if (transport.transfers) label += `, ${transport.transfers} change${transport.transfers > 1 ? 's' : ''}`;
+  return label;
 }

@@ -86,7 +86,7 @@ export function parseOpeningHours(raw: string): FormattedOpeningHours | null {
 
     const days = dayPart
       ? dayPart.split(',').flatMap(chunk => expandDays(chunk))
-      : [];
+      : [...DAY_ORDER];
 
     if (!days.length) continue;
 
@@ -133,7 +133,7 @@ type GeoapifyPlaceDetails = {
 // ─── PlaceDetailsProvider (task 2.2) ─────────────────────────────────────────
 
 export class PlaceDetailsProvider {
-  private cache = new Map<string, Place>();
+  private cache = new Map<string, Promise<Place>>();
 
   constructor(
     private fixture = false,
@@ -152,14 +152,19 @@ export class PlaceDetailsProvider {
    * Tasks 2.4, 2.5
    */
   async enrichPlaceDetails(place: Place): Promise<Place> {
-    if (this.cache.has(place.id)) return this.cache.get(place.id)!;
+    const cached = this.cache.get(place.id);
+    if (cached) return cached;
 
-    const enriched = this.isLive
-      ? await this.fetchFromGeoapify(place)
-      : this.fixtureEnrich(place);
-
-    this.cache.set(place.id, enriched);
-    return enriched;
+    const enrichment = this.isLive
+      ? this.fetchFromGeoapify(place)
+      : Promise.resolve(this.fixtureEnrich(place));
+    this.cache.set(place.id, enrichment);
+    try {
+      return await enrichment;
+    } catch (error) {
+      if (this.cache.get(place.id) === enrichment) this.cache.delete(place.id);
+      throw error;
+    }
   }
 
   /**
@@ -183,20 +188,8 @@ export class PlaceDetailsProvider {
   // ── Fixture enrichment ──────────────────────────────────────────────────────
 
   private fixtureEnrich(place: Place): Place {
-    // Demo NYC places get realistic hours; odd-indexed get unknown hours
-    const index = Number(place.id.replace('demo-', ''));
-    const hasHours = !isNaN(index) && index % 3 !== 2;
-
-    const formattedOpeningHours: FormattedOpeningHours | undefined = hasHours
-      ? {
-          monday: [{ open: '10:00', close: '18:00' }],
-          tuesday: [{ open: '10:00', close: '18:00' }],
-          wednesday: [],
-          thursday: [{ open: '10:00', close: '18:00' }],
-          friday: [{ open: '10:00', close: '21:00' }],
-          saturday: [{ open: '10:00', close: '21:00' }],
-          sunday: [{ open: '10:00', close: '17:00' }],
-        }
+    const formattedOpeningHours = place.openingHours
+      ? parseOpeningHours(place.openingHours) ?? undefined
       : undefined;
 
     return {

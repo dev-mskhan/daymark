@@ -3,10 +3,83 @@
  * Tasks 2.11 (opening hours parsing) and 2.12 (timezone validation)
  */
 
-import { describe, it, expect } from 'vitest';
-import { parseOpeningHours } from './place-details';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { PlaceDetailsProvider, parseOpeningHours } from './place-details';
+import { PlacesProvider } from './places';
 import { extractTimezone, buildCaveatNotice } from '../planning-context';
 import type { Activity, Place, Snapshot } from '../domain';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+describe('PlaceDetailsProvider cache', () => {
+  it('deduplicates concurrent enrichment requests for the same place', async () => {
+    vi.stubEnv('GEOAPIFY_API_KEY', 'test-key');
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({
+      features: [{ properties: { opening_hours: 'Mo-Fr 09:00-18:00', timezone: { name: 'America/New_York' } } }],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new PlaceDetailsProvider(false);
+    const place: Place = {
+      id: 'geoapify:place-1',
+      name: 'Test Museum',
+      address: 'New York',
+      latitude: 40.75,
+      longitude: -73.99,
+      types: ['museum'],
+      source: 'geoapify',
+    };
+
+    const enriched = await provider.enrichCandidates([place, { ...place }]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(enriched).toHaveLength(2);
+    expect(enriched[0].timezone).toBe('America/New_York');
+    expect(enriched[1].formattedOpeningHours?.monday).toEqual([{ open: '09:00', close: '18:00' }]);
+  });
+
+  it('retries enrichment after a failed request instead of caching the failure', async () => {
+    vi.stubEnv('GEOAPIFY_API_KEY', 'test-key');
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce(Response.json({
+        features: [{ properties: { timezone: { name: 'America/New_York' } } }],
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new PlaceDetailsProvider(false);
+    const place: Place = {
+      id: 'geoapify:place-2',
+      name: 'Test Gallery',
+      address: 'New York',
+      latitude: 40.75,
+      longitude: -73.99,
+      types: ['museum'],
+      source: 'geoapify',
+    };
+
+    await expect(provider.enrichCandidates([place])).resolves.toEqual([place]);
+    const retried = await provider.enrichPlaceDetails(place);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(retried.timezone).toBe('America/New_York');
+  });
+});
+
+describe('fixture place enrichment', () => {
+  it('uses the demo opening-hours data and leaves missing hours unverified', async () => {
+    const places = await new PlacesProvider(true).discover('New York City', []);
+    const enriched = await new PlaceDetailsProvider(true).enrichCandidates(places);
+    const market = enriched.find(place => place.id === 'demo-3');
+    const highLine = enriched.find(place => place.id === 'demo-4');
+    const gallery = enriched.find(place => place.id === 'demo-2');
+
+    expect(market?.formattedOpeningHours?.wednesday).toEqual([{ open: '07:00', close: '21:00' }]);
+    expect(highLine?.formattedOpeningHours?.sunday).toEqual([{ open: '07:00', close: '22:00' }]);
+    expect(gallery?.formattedOpeningHours).toBeUndefined();
+  });
+});
 
 // ─── Task 2.11: Opening hours parsing tests ───────────────────────────────────
 
@@ -34,6 +107,13 @@ describe('parseOpeningHours', () => {
     expect(result!.monday).toEqual([{ open: '00:00', close: '24:00' }]);
     expect(result!.sunday).toEqual([{ open: '00:00', close: '24:00' }]);
     expect(Object.keys(result!)).toHaveLength(7);
+  });
+
+  it('applies time-only rules to every day of the week', () => {
+    const result = parseOpeningHours('07:00-22:00');
+    expect(result).not.toBeNull();
+    expect(Object.values(result!)).toHaveLength(7);
+    expect(result!.sunday).toEqual([{ open: '07:00', close: '22:00' }]);
   });
 
   it('parses a complex Metro Museum format with closed day', () => {
@@ -120,6 +200,18 @@ describe('extractTimezone', () => {
     const candidates = [makePlace('p1', 'America/New_York'), makePlace('p2', 'America/Chicago')];
     const result = extractTimezone(activities, candidates);
     expect(result.timezoneVerified).toBe(false);
+  });
+
+  it('does not claim an NYC-to-Chicago itinerary has one verified timezone', () => {
+    const activities = [makeActivity('a1', 'nyc'), makeActivity('a2', 'chicago')];
+    const candidates = [
+      { ...makePlace('nyc', 'America/New_York'), name: 'New York City' },
+      { ...makePlace('chicago', 'America/Chicago'), name: 'Chicago' },
+    ];
+    expect(extractTimezone(activities, candidates)).toEqual({
+      timezone: 'America/New_York',
+      timezoneVerified: false,
+    });
   });
 
   it('ignores candidates not in the itinerary', () => {

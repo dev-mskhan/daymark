@@ -81,12 +81,14 @@ describe('planMultiDayTrip — 3-day with overnight', () => {
   const hotel = makePlace('hotel-1', 40.758, -73.985, 'Demo Hotel Midtown');
 
   it('plans all 3 days and returns correct structure', async () => {
+    const started = performance.now();
     const request = makeRequest([
       makeDayBoundary(1, '2026-10-12', hotel),
       makeDayBoundary(2, '2026-10-13', hotel),
       makeDayBoundary(3, '2026-10-14'),
     ]);
     const result = await planMultiDayTrip(request, undefined, signal);
+    expect(performance.now() - started).toBeLessThan(30_000);
     expect(result.days).toHaveLength(3);
     expect(result.days.map(d => d.dayNumber)).toEqual([1, 2, 3]);
     expect(result.totalActivities).toBeGreaterThan(0);
